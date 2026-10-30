@@ -1,4 +1,4 @@
-const User = require('../models/user');
+const User = require('./user');
 
 class userService {
     constructor(BcriptService) {
@@ -6,26 +6,29 @@ class userService {
     }
 
     async login(senha, email) {
-        const user = await User.findOne({email: email});
-        if(!user) throw new Error("user invalido")
+        const user = await User.findOne({ email: email });
+        if (!user) throw new Error("user invalido");
 
-        if(!this.BcriptService.isEqual(senha, user.senha)) {
+        const storedPassword = user.password || user.senha;
+        if (!this.BcriptService.isEqual(senha, storedPassword)) {
             throw Error("user invalido");
         }
         return user;
     }
+
     async save(body) {
-        body['senha'] = this.BcriptService.criptografar(body.senha);
+        const rawPassword = body.password || body.senha;
+        body['password'] = this.BcriptService.criptografar(rawPassword);
 
         const user = new User(body);
-        console.log("user: ", user);  
-        
-        return await user.create(user); 
+        console.log("user: ", user);
+
+        return await user.save();
     }
 
-    async getById (id) {
-        return await User.findOne({_id: id});
+    async getById(id) {
+        return await User.findOne({ _id: id });
     }
-} 
+}
 
-module.exports = userService
+module.exports = userService;

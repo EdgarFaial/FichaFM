@@ -1,16 +1,24 @@
-const mongodb = require('mongoose');
+const mongoose = require('mongoose');
+
+// CRITICAL: fail fast, don't hang when MongoDB is not running locally
+mongoose.set('bufferCommands', false);
 
 const conexao = async (uri) => {
     try {
         console.log("Iniciando conexao com o banco...");
-        console.log("URI recebida:", uri);
-        console.log("mongoose.connect existe?", typeof mongodb.connect);
-        await mongodb.connect(uri);
+        const targetUri = uri || process.env.MONGODB_URI;
+        if (!targetUri) {
+            console.warn("MONGODB_URI nao configurada — operando em modo offline.");
+            return false;
+        }
+        await mongoose.connect(targetUri, {
+            serverSelectionTimeoutMS: 2000
+        });
         console.log("Conexao com o MongoDB estabelecida");
-        return true
+        return true;
     } catch (err) {
-        console.error("Erro ao conectar no MongoDB:", err.message);
-        return false
+        console.warn("MongoDB nao conectado — algumas funcionalidades de persistencia nao estarao disponiveis:", err.message);
+        return false;
     }
 };
 

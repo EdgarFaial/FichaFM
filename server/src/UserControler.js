@@ -11,17 +11,35 @@ class UserController {
     registrarRotas() {
         this.router.post("/register", this.registrar.bind(this));
         this.router.post("/login", this.login.bind(this));
+        this.router.post("/google-login", this.googleLogin.bind(this));
         this.router.get("/validate", this.validarToken.bind(this));
     }
 
+    async googleLogin(req, resp) {
+        const email = req.body.email;
+        if (!email) {
+            return resp.status(400).json({ message: "E-mail do Google não informado" });
+        }
+        try {
+            const token = this.JwtService.criarToken(email, req.body.googleId || 'google-user');
+            return resp.status(200).json({
+                email: email,
+                token: token
+            });
+        } catch (e) {
+            return resp.status(500).json({ message: "Erro ao autenticar com Google: " + e.message });
+        }
+    }
 
     async registrar(req, resp) {
-        if (!req.body.email || !req.body.password) {
+        const email = req.body.email;
+        const password = req.body.password || req.body.senha;
+        if (!email || !password) {
             return resp.status(400).json({ message: "Informações faltando na requisição" });
         }
         try {
-            const user = await this.UserService.save(req.body);
-            const token = this.JwtService.criarToken(req.body.email, user.id);
+            const user = await this.UserService.save({ email, password });
+            const token = this.JwtService.criarToken(email, user._id || user.id);
             return resp.status(201).json({
                 email: user.email,
                 token: token
@@ -32,7 +50,7 @@ class UserController {
                 return resp.status(409).json({ message: "Erro ao fazer o registro" });
             }
             console.error("erro ao tentar criar novo user: " + e.message);
-            return resp.status(404).json({ message: "Erro ao criar usuário" });
+            return resp.status(500).json({ message: "Erro ao criar usuário: " + e.message });
         }
     }
 
@@ -41,19 +59,21 @@ class UserController {
     }
 
     async login(req, resp) {
-        if (!req.body.email || !req.body.password){
+        const email = req.body.email;
+        const password = req.body.password || req.body.senha;
+        if (!email || !password) {
             return resp.status(400).json({ message: "Informações requeridas não foram enviadas" });
         }
         try {
-            const user = await this.UserService.login(req.body.password, req.body.email);
-            const token = this.JwtService.criarToken(user.email, user.id, );
+            const user = await this.UserService.login(password, email);
+            const token = this.JwtService.criarToken(user.email, user._id || user.id);
             return resp.status(200).json({
                 email: user.email,
                 token: token
             });
         } catch (e) {
             console.log(e);
-            return resp.status(404).json({ message: e.message });
+            return resp.status(401).json({ message: e.message });
         }
     }
 }

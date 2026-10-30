@@ -1,0 +1,8 @@
+{
+  "name": "Ficha FM",
+  "description": "Criador de ficha para o sistema de Feiticeiros e Maldições RPG",
+  "permissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
