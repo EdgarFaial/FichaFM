@@ -1,12 +1,13 @@
-export type AttributeName = 'forca' | 'destreza' | 'constituicao' | 'inteligencia' | 'presenca';
+export type AttributeName = 'forca' | 'destreza' | 'constituicao' | 'inteligencia' | 'sabedoria' | 'presenca';
 
-export type SkillTraining = 'destreinado' | 'treinado' | 'veterano' | 'expert';
+export type SkillTraining = 'destreinado' | 'treinado' | 'especialista';
 
 export interface Skill {
   id: string;
   name: string;
   attribute: AttributeName;
   training: SkillTraining;
+  requiresTraining?: boolean;
 }
 
 export interface Technique {
@@ -15,7 +16,7 @@ export interface Technique {
   actionType: 'Padrao' | 'Bonus' | 'Reacao' | 'Ritual' | 'Passiva';
   peCost: number;
   range: string;
-  damageDice?: string; // ex: "2d8 + 3"
+  damageDice?: string;
   description: string;
 }
 
@@ -48,123 +49,167 @@ export interface CharacterSheet {
   personal: PersonalInfo;
   progression: {
     level: number; // 1 - 20
-    grade: string; // Grau 4, 3, 2, 1, Especial
+    grade: string; // Quarto Grau, Terceiro Grau, Segundo Grau, Primeiro Grau, Grau Especial
     experience: number;
-    masteryBonus: number; // +2 to +6
-    pePerTurnLimit: number;
+    trainingBonus: number; // +2 a +6 (Bônus de Treinamento oficial)
   };
   build: {
     origin: string;
-    specialization: string; // Empty if Restringido
+    specialization: string;
     isRestricted: boolean;
     originTrait: string;
     specializationTrait?: string;
   };
   attributes: {
-    forca: number;
+    forca: number; // Valor bruto (ex: 10 a 20)
     destreza: number;
     constituicao: number;
     inteligencia: number;
+    sabedoria: number;
     presenca: number;
   };
   status: {
     currentHp: number;
     maxHp: number;
     tempHp: number;
-    currentPe: number;
+    currentPe: number; // PE ou Estamina se Restringido
     maxPe: number;
     defense: number;
     movement: number;
     damageReduction: number;
+    soulIntegrity: number; // Integridade da Alma = PV Máx
+    initiative: number;
+    attention: number; // Atenção = 10 + Percepção
   };
   skills: Skill[];
   techniques: Technique[];
   bindingVows: BindingVow[];
 }
 
-export const DEFAULT_SKILLS: { name: string; attribute: AttributeName }[] = [
+// 20 Perícias Oficiais (Livro de Regras v2.5.2, p. 284)
+export const OFFICIAL_SKILLS: { name: string; attribute: AttributeName; requiresTraining?: boolean }[] = [
   { name: 'Acrobacia', attribute: 'destreza' },
-  { name: 'Adestramento', attribute: 'presenca' },
   { name: 'Atletismo', attribute: 'forca' },
+  { name: 'Direção', attribute: 'sabedoria' },
   { name: 'Enganação', attribute: 'presenca' },
-  { name: 'Fortitude', attribute: 'constituicao' },
+  { name: 'Feitiçaria', attribute: 'inteligencia', requiresTraining: true },
   { name: 'Furtividade', attribute: 'destreza' },
-  { name: 'Iniciativa', attribute: 'destreza' },
+  { name: 'História', attribute: 'inteligencia' },
   { name: 'Intimidação', attribute: 'presenca' },
-  { name: 'Intuição', attribute: 'presenca' },
+  { name: 'Intuição', attribute: 'sabedoria' },
   { name: 'Investigação', attribute: 'inteligencia' },
-  { name: 'Luta', attribute: 'forca' },
-  { name: 'Medicina (Técnica Reversa)', attribute: 'inteligencia' },
-  { name: 'Ocultismo / Jujutsu', attribute: 'inteligencia' },
-  { name: 'Percepção', attribute: 'presenca' },
-  { name: 'Pontaria', attribute: 'destreza' },
-  { name: 'Reflexos', attribute: 'destreza' },
-  { name: 'Sobrevivência', attribute: 'inteligencia' },
-  { name: 'Vontade', attribute: 'presenca' }
+  { name: 'Medicina', attribute: 'sabedoria', requiresTraining: true },
+  { name: 'Ocultismo', attribute: 'sabedoria' },
+  { name: 'Ofício', attribute: 'inteligencia', requiresTraining: true },
+  { name: 'Percepção', attribute: 'sabedoria' },
+  { name: 'Performance', attribute: 'presenca' },
+  { name: 'Persuasão', attribute: 'presenca' },
+  { name: 'Prestidigitação', attribute: 'destreza', requiresTraining: true },
+  { name: 'Sobrevivência', attribute: 'sabedoria' },
+  { name: 'Tecnologia', attribute: 'inteligencia' },
+  { name: 'Teologia', attribute: 'inteligencia' }
 ];
 
-export const ORIGINS = [
+// 7 Origens Oficiais (Capítulo 3)
+export const OFFICIAL_ORIGINS = [
   {
-    id: 'cla_tradicional',
-    name: 'Herdeiro de Clã',
-    description: 'Nascido em uma das linhagens nobres de feiticeiros, com técnicas herdadas refinadas por gerações.',
-    trait: 'Linhagem Nobre: +2 em testes de controle de energia amaldiçoada e acesso a técnicas de família.'
+    id: 'inato',
+    name: 'Inato',
+    description: 'Despertou com uma técnica amaldiçoada única e própria gravada em sua alma.',
+    trait: 'Domínio Inato: +2 em testes de Feitiçaria e flexibilidade no aprimoramento da técnica inata.'
   },
   {
-    id: 'civil_desperto',
-    name: 'Civil Desperto',
-    description: 'Uma pessoa comum que subitamente enxergou maldições e sobreviveu por puro instinto e tenacidade.',
-    trait: 'Instinto de Sobrevivência: Uma vez por cena, soma +2 em um teste de Reflexos ou Esquiva.'
+    id: 'herdado',
+    name: 'Herdado',
+    description: 'Nascido em um clã nobre de feiticeiros, com técnicas passadas de geração em geração.',
+    trait: 'Linhagem Nobre: Acesso ao conhecimento herdado do clã e suporte de ferramentas de família.'
   },
   {
-    id: 'prodigio_academico',
-    name: 'Prodígio Acadêmico',
-    description: 'Estudante dedicado da Escola Jujutsu que compreende a teoria por trás da fórmula da energia.',
-    trait: 'Mente Analítica: +2 em testes de Ocultismo e Investigação para identificar maldições e barreiras.'
-  },
-  {
-    id: 'receptaculo',
-    name: 'Receptáculo Amaldiçoado',
-    description: 'Hospedeiro involuntário ou resiliente de fragmentos ou objetos amaldiçoados de alto grau.',
-    trait: 'Resistência Maligna: Redução de Dano 2 contra efeitos diretos de maldições e venenos.'
+    id: 'derivado',
+    name: 'Derivado',
+    description: 'Sua energia e técnica derivaram de uma fonte alternativa, como consumo de objeto amaldiçoado ou alteração de alma (como Yuji Itadori ou Junpei).',
+    trait: 'Corpo Adaptável: Resistência contra possessão e efeitos que alterem sua integridade de alma.'
   },
   {
     id: 'restringido',
     name: 'Restringido (Restrição Celestial)',
-    description: 'Nasceu sem uma única gota de energia amaldiçoada em troca de capacidades físicas sobre-humanas.',
-    trait: 'Corpo Ápice: Não possui PE (0), mas ganha PV aumentado, sentidos aguçados, velocidade sobre-humana e imunidade à detecção de energia.'
+    description: 'Nasceu com zero de energia amaldiçoada em troca de um físico absoluto sobre-humano (como Toji Fushiguro e Maki Zenin).',
+    trait: 'Físico Abençoado: Deslocamento +3m (total 12m), Pontos de Estamina no lugar de PE, imune a doenças mundanas e vantagem contra venenos.'
+  },
+  {
+    id: 'feto_hibrido',
+    name: 'Feto Amaldiçoado Híbrido',
+    description: 'Híbrido entre humano e maldição em estado embrionário desenvolvido, como Choso.',
+    trait: 'Herança Maldita & Vigor Maldito: Anatomia especial e capacidade de converter estamina em regeneração.'
+  },
+  {
+    id: 'sem_tecnica',
+    name: 'Sem Técnica',
+    description: 'Não possui técnica amaldiçoada inata, dedicando-se com maestria extrema ao uso de armas e Domínio Simples (como Kasumi Miwa e Kusakabe).',
+    trait: 'Dedicação Extrema: Treinamento adicional em armas marciais e bônus no aprendizado de técnicas de barreira simples.'
+  },
+  {
+    id: 'corpo_mutante',
+    name: 'Corpo Amaldiçoado Mutante',
+    description: 'Corpo amaldiçoado com consciência própria e múltiplos núcleos que alternam características (como Panda).',
+    trait: 'Múltiplos Núcleos: Possui núcleos com focos e propriedades corporais alternáveis.'
   }
 ];
 
-export const SPECIALIZATIONS = [
+// 6 Especializações Oficiais (Capítulo 4)
+export const OFFICIAL_SPECIALIZATIONS = [
   {
-    id: 'manipulador',
-    name: 'Manipulador de Feitiços',
-    description: 'Focado em disparos concentrados de energia, controle de área e técnicas à distância.',
-    trait: 'Eficiência Amaldiçoada: Reduz o custo de PE da sua técnica principal em 1 (mínimo 1).'
+    id: 'lutador',
+    name: 'Lutador',
+    description: 'Especialista em combate físico, artes marciais e ataques desarmados brutais (como Yuji Itadori, Hakari e Kashimo).',
+    hpInitial: 12,
+    hpPerLevel: 6,
+    pePerLevel: 4,
+    trait: 'Corpo Treinado: Dano desarmado aprimorado (inicia em 1d8) e ataque desarmado adicional como ação bônus.'
   },
   {
-    id: 'combatente',
-    name: 'Combatente de Energia',
-    description: 'Especialista em reforço físico através do fluxo de energia corporal e artes marciais devastadoras.',
-    trait: 'Golpe Concentrado: Adiciona seu modificador de FOR ou DES ao dano desarmado e corpo-a-corpo amaldiçoado.'
+    id: 'especialista_combate',
+    name: 'Especialista em Combate',
+    description: 'Mestre em táticas de guerra, armas marciais e ferramentas amaldiçoadas cortantes e de impacto.',
+    hpInitial: 12,
+    hpPerLevel: 6,
+    pePerLevel: 4,
+    trait: 'Maestria com Armas: Proficiência com todas as armas marciais e manobras avançadas de combate.'
   },
   {
-    id: 'invocador',
-    name: 'Invocador de Shikigamis',
-    description: 'Canaliza sua energia através de sombras, amuletos ou talismãs para invocar espíritos servos.',
-    trait: 'Pacto Espiritual: Pode manter dois familiares ativos simultaneamente sem custo adicional por rodada.'
+    id: 'especialista_tecnica',
+    name: 'Especialista em Técnica',
+    description: 'Focado em desenvolver, refinar e expandir ao máximo a força e o alcance da sua técnica amaldiçoada.',
+    hpInitial: 10,
+    hpPerLevel: 5,
+    pePerLevel: 6,
+    trait: 'Refinamento de Técnica: +INT em PE inicial e maior número de aptidões amaldiçoadas e feitiços.'
   },
   {
-    id: 'barreirista',
-    name: 'Especialista em Barreiras & Suporte',
-    description: 'Mestre no lançamento de cortinas, barreiras defensivas e controle da técnica reversa para cura.',
-    trait: 'Muralha Oculta: Suas barreiras ganham RD +5 e você pode usar Técnica Reversa para estabilizar aliados.'
+    id: 'controlador',
+    name: 'Controlador',
+    description: 'Manipulador do campo de batalha, impondo condições, barreiras, regras e domínio de espaço.',
+    hpInitial: 10,
+    hpPerLevel: 5,
+    pePerLevel: 5,
+    trait: 'Controle de Campo: +INT ou PRE em PE inicial e habilidades para ditar a movimentação e alcance dos inimigos.'
   },
   {
-    id: 'artifice',
-    name: 'Artífice de Ferramentas',
-    description: 'Combina armamento tático e armas brancas imbuídas com energia amaldiçoada de alto impacto.',
-    trait: 'Ressonância com Armas: Concede bônus de +2 no acerto e dano com armas amaldiçoadas.'
+    id: 'suporte',
+    name: 'Suporte',
+    description: 'Auxilia aliados com barreiras, técnicas de amplificação e aplicação de Técnica Reversa para cura.',
+    hpInitial: 10,
+    hpPerLevel: 5,
+    pePerLevel: 5,
+    trait: 'Técnica Reversa & Auxílio: +SAB ou PRE em PE inicial e facilidade em estabilizar e regenerar aliados.'
+  },
+  {
+    id: 'restringido',
+    name: 'Restringido',
+    description: 'Especialização obrigatória e exclusiva da Origem Restringido (Restrição Celestial). Físico sobre-humano e combate com ferramentas.',
+    hpInitial: 16,
+    hpPerLevel: 7,
+    pePerLevel: 0,
+    trait: 'Restrito pelos Céus: 0 PE, Pontos de Estamina (4 + 4/nível), soma FOR ou CON na Defesa e Ataque Furtivo.'
   }
 ];
