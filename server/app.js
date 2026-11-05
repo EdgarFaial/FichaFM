@@ -18,7 +18,11 @@ const host = '0.0.0.0';
 const app = express();
 
 // Initialize database connection
-conexao(process.env.MONGODB_URI);
+if (process.env.MONGODB_URI) {
+    conexao(process.env.MONGODB_URI);
+} else {
+    console.log("Modo local: Nenhuma MONGODB_URI definida, operando em modo offline.");
+}
 
 app.use(cors());
 app.use(express.json());

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { CharacterSheet } from '../types/character';
+import { calculateModifier } from '../utils/characterCalculations';
 
 defineProps<{
   userEmail: string;
@@ -38,7 +39,7 @@ const handleDelete = (id: string, name: string) => {
       <h2 class="empty-title">Nenhuma ficha criada ainda</h2>
       <p class="empty-desc">
         Comece criando a ficha do seu feiticeiro com cálculo automático de atributos, 
-        energia amaldiçoada, técnicas e perícias do sistema Feiticeiros & Maldições.
+        energia amaldiçoada / estamina, técnicas e perícias do sistema Feiticeiros & Maldições v2.5.2.
       </p>
       <button type="button" class="btn-create-large" @click="emit('new-character')">
         Criar Primeira Ficha
@@ -83,9 +84,9 @@ const handleDelete = (id: string, name: string) => {
             <span class="kpi-number text-red">{{ char.status.maxHp }}</span>
           </div>
           <div class="kpi-pill">
-            <span class="kpi-title">PE Máx</span>
+            <span class="kpi-title">{{ char.build.isRestricted ? 'Estamina' : 'PE Máx' }}</span>
             <span class="kpi-number text-blue">
-              {{ char.build.isRestricted ? '0' : char.status.maxPe }}
+              {{ char.status.maxPe }}
             </span>
           </div>
           <div class="kpi-pill">
@@ -93,18 +94,19 @@ const handleDelete = (id: string, name: string) => {
             <span class="kpi-number">{{ char.status.defense }}</span>
           </div>
           <div class="kpi-pill">
-            <span class="kpi-title">Maestria</span>
-            <span class="kpi-number">+{{ char.progression.masteryBonus }}</span>
+            <span class="kpi-title">Treinamento</span>
+            <span class="kpi-number">+{{ char.progression.trainingBonus }}</span>
           </div>
         </div>
 
-        <!-- Attributes preview -->
+        <!-- 6 Attributes preview -->
         <div class="attrs-row">
-          <div class="attr-chip">FOR: +{{ char.attributes.forca }}</div>
-          <div class="attr-chip">DES: +{{ char.attributes.destreza }}</div>
-          <div class="attr-chip">CON: +{{ char.attributes.constituicao }}</div>
-          <div class="attr-chip">INT: +{{ char.attributes.inteligencia }}</div>
-          <div class="attr-chip">PRE: +{{ char.attributes.presenca }}</div>
+          <div class="attr-chip">FOR: {{ calculateModifier(char.attributes.forca) >= 0 ? `+${calculateModifier(char.attributes.forca)}` : calculateModifier(char.attributes.forca) }}</div>
+          <div class="attr-chip">DES: {{ calculateModifier(char.attributes.destreza) >= 0 ? `+${calculateModifier(char.attributes.destreza)}` : calculateModifier(char.attributes.destreza) }}</div>
+          <div class="attr-chip">CON: {{ calculateModifier(char.attributes.constituicao) >= 0 ? `+${calculateModifier(char.attributes.constituicao)}` : calculateModifier(char.attributes.constituicao) }}</div>
+          <div class="attr-chip">INT: {{ calculateModifier(char.attributes.inteligencia) >= 0 ? `+${calculateModifier(char.attributes.inteligencia)}` : calculateModifier(char.attributes.inteligencia) }}</div>
+          <div class="attr-chip">SAB: {{ calculateModifier(char.attributes.sabedoria ?? 10) >= 0 ? `+${calculateModifier(char.attributes.sabedoria ?? 10)}` : calculateModifier(char.attributes.sabedoria ?? 10) }}</div>
+          <div class="attr-chip">PRE: {{ calculateModifier(char.attributes.presenca) >= 0 ? `+${calculateModifier(char.attributes.presenca)}` : calculateModifier(char.attributes.presenca) }}</div>
         </div>
 
         <!-- Card Actions -->
@@ -349,19 +351,20 @@ const handleDelete = (id: string, name: string) => {
 }
 
 .attrs-row {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
   gap: 0.25rem;
 }
 
 .attr-chip {
-  font-size: 0.725rem;
+  font-size: 0.7rem;
   font-weight: 700;
   color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
   background-color: var(--color-bg-base);
   border-radius: 4px;
-  padding: 0.2rem 0.4rem;
+  padding: 0.2rem 0.25rem;
+  text-align: center;
 }
 
 .char-card-actions {

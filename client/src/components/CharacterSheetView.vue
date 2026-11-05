@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import type { CharacterSheet, Technique, Skill } from '../types/character';
-import { calculateSkillBonus } from '../utils/characterCalculations';
+import { calculateModifier, calculateSkillBonus } from '../utils/characterCalculations';
 
 const props = defineProps<{
   sheet: CharacterSheet;
@@ -19,14 +19,13 @@ const currentPe = ref(props.sheet.status.currentPe);
 
 const activeTab = ref<'geral' | 'combate' | 'pericias' | 'tecnicas' | 'pessoal'>('geral');
 
-// Selected technique for detailed pop-up (Requisito 19: Pop-up com descrição de características de técnicas)
+// Selected technique for detailed pop-up (Requisito 19)
 const selectedTechModal = ref<Technique | null>(null);
 
 // Dice roller
 const rollLog = ref<{ label: string; text: string; total: number; isCrit?: boolean }[]>([]);
 
 const rollDice = (diceStr: string, label: string) => {
-  // Simple dice evaluator: e.g. "d20 + 4", "2d8 + 3", "d20"
   try {
     const cleanStr = diceStr.toLowerCase().replace(/\s+/g, '');
     const parts = cleanStr.split(/([+-])/);
@@ -65,7 +64,6 @@ const rollDice = (diceStr: string, label: string) => {
     });
     if (rollLog.value.length > 5) rollLog.value.pop();
   } catch {
-    // Fallback simple d20
     const r = Math.floor(Math.random() * 20) + 1;
     rollLog.value.unshift({
       label,
@@ -88,7 +86,7 @@ const rollD20 = (bonus: number, label: string) => {
   if (rollLog.value.length > 5) rollLog.value.pop();
 };
 
-// HP & PE modifiers
+// HP & PE/Estamina modifiers
 const alterHp = (amount: number) => {
   currentHp.value = Math.max(0, Math.min(props.sheet.status.maxHp, currentHp.value + amount));
   emit('update-sheet', {
@@ -98,7 +96,6 @@ const alterHp = (amount: number) => {
 };
 
 const alterPe = (amount: number) => {
-  if (props.sheet.build.isRestricted) return;
   currentPe.value = Math.max(0, Math.min(props.sheet.status.maxPe, currentPe.value + amount));
   emit('update-sheet', {
     ...props.sheet,
@@ -108,7 +105,8 @@ const alterPe = (amount: number) => {
 
 const useTechnique = (tech: Technique) => {
   if (tech.peCost > 0 && currentPe.value < tech.peCost) {
-    alert(`Energia insuficiente! Esta técnica custa ${tech.peCost} PE (você tem ${currentPe.value} PE).`);
+    const resourceName = props.sheet.build.isRestricted ? 'Estamina' : 'PE';
+    alert(`${resourceName} insuficiente! Esta habilidade custa ${tech.peCost} (você tem ${currentPe.value}).`);
     return;
   }
   alterPe(-tech.peCost);
@@ -117,15 +115,15 @@ const useTechnique = (tech: Technique) => {
   } else {
     rollLog.value.unshift({
       label: `Técnica Ativada`,
-      text: `${tech.name} (-${tech.peCost} PE)`,
+      text: `${tech.name} (-${tech.peCost} ${props.sheet.build.isRestricted ? 'Estamina' : 'PE'})`,
       total: tech.peCost
     });
   }
 };
 
 const getSkillBonus = (sk: Skill) => {
-  const attrVal = props.sheet.attributes[sk.attribute] || 0;
-  return calculateSkillBonus(attrVal, sk.training, props.sheet.progression.masteryBonus);
+  const attrScore = props.sheet.attributes[sk.attribute] ?? 10;
+  return calculateSkillBonus(attrScore, sk.training, props.sheet.progression.trainingBonus);
 };
 </script>
 
@@ -171,8 +169,8 @@ const getSkillBonus = (sk: Skill) => {
 
       <div class="hero-right-kpis">
         <div class="kpi-box">
-          <span class="kpi-label">Maestria</span>
-          <span class="kpi-val">+{{ sheet.progression.masteryBonus }}</span>
+          <span class="kpi-label">Treinamento</span>
+          <span class="kpi-val">+{{ sheet.progression.trainingBonus }}</span>
         </div>
         <div class="kpi-box">
           <span class="kpi-label">Defesa</span>
@@ -182,13 +180,13 @@ const getSkillBonus = (sk: Skill) => {
           <span class="kpi-label">Deslocamento</span>
           <span class="kpi-val">{{ sheet.status.movement }}m</span>
         </div>
-        <div class="kpi-box" v-if="!sheet.build.isRestricted">
-          <span class="kpi-label">PE / Turno</span>
-          <span class="kpi-val">{{ sheet.progression.pePerTurnLimit }}</span>
+        <div class="kpi-box">
+          <span class="kpi-label">Atenção</span>
+          <span class="kpi-val">{{ sheet.status.attention || 10 }}</span>
         </div>
-        <div class="kpi-box" v-else>
-          <span class="kpi-label">Redução Dano</span>
-          <span class="kpi-val">RD {{ sheet.status.damageReduction }}</span>
+        <div class="kpi-box">
+          <span class="kpi-label">Iniciativa</span>
+          <span class="kpi-val">{{ calculateModifier(sheet.attributes.destreza) >= 0 ? `+${calculateModifier(sheet.attributes.destreza)}` : calculateModifier(sheet.attributes.destreza) }}</span>
         </div>
       </div>
     </header>
@@ -207,7 +205,7 @@ const getSkillBonus = (sk: Skill) => {
       </div>
     </div>
 
-    <!-- Vitals Controls (PV / PE) -->
+    <!-- Vitals Controls (PV / PE ou Estamina) -->
     <div class="vitals-dashboard-card">
       <!-- HP Block -->
       <div class="vital-control-block">
@@ -231,18 +229,20 @@ const getSkillBonus = (sk: Skill) => {
         </div>
       </div>
 
-      <!-- PE Block -->
+      <!-- PE or Estamina Block -->
       <div class="vital-control-block">
         <div class="vital-meta-row">
           <div>
-            <span class="vital-title text-blue">ENERGIA AMALDIÇOADA (PE)</span>
+            <span class="vital-title text-blue">
+              {{ sheet.build.isRestricted ? 'PONTOS DE ESTAMINA' : 'ENERGIA AMALDIÇOADA (PE)' }}
+            </span>
             <span class="vital-numbers">
-              {{ sheet.build.isRestricted ? '0 / 0 (Restringido)' : `${currentPe} / ${sheet.status.maxPe}` }}
+              {{ currentPe }} / {{ sheet.status.maxPe }}
             </span>
           </div>
-          <div v-if="!sheet.build.isRestricted" class="vital-buttons">
+          <div class="vital-buttons">
             <button type="button" class="btn-vital-action" @click="alterPe(-1)">-1</button>
-            <button type="button" class="btn-vital-action" @click="alterPe(-sheet.progression.pePerTurnLimit)">-{{ sheet.progression.pePerTurnLimit }}</button>
+            <button type="button" class="btn-vital-action" @click="alterPe(-4)">-4</button>
             <button type="button" class="btn-vital-action" @click="alterPe(1)">+1</button>
             <button type="button" class="btn-vital-action" @click="alterPe(sheet.status.maxPe)">Max</button>
           </div>
@@ -250,57 +250,66 @@ const getSkillBonus = (sk: Skill) => {
         <div class="track-bar">
           <div 
             class="fill-bar fill-blue" 
-            :style="{ width: sheet.build.isRestricted ? '0%' : `${Math.min(100, (currentPe / sheet.status.maxPe) * 100)}%` }"
+            :style="{ width: `${sheet.status.maxPe > 0 ? Math.min(100, (currentPe / sheet.status.maxPe) * 100) : 0}%` }"
           ></div>
         </div>
       </div>
     </div>
 
-    <!-- Attributes Row (#10) - Click to roll d20 + attribute -->
+    <!-- 6 Attributes Row (#10 & p. 17-18) -->
     <div class="attributes-grid-interactive">
       <div 
         class="attr-card-roll" 
-        @click="rollD20(sheet.attributes.forca, `Teste de FORÇA`)"
+        @click="rollD20(calculateModifier(sheet.attributes.forca), `Teste de FORÇA`)"
       >
         <span class="attr-abbr">FOR</span>
-        <span class="attr-score">+{{ sheet.attributes.forca }}</span>
-        <span class="attr-desc">Rolar d20 + FOR</span>
+        <span class="attr-score">{{ calculateModifier(sheet.attributes.forca) >= 0 ? `+${calculateModifier(sheet.attributes.forca)}` : calculateModifier(sheet.attributes.forca) }}</span>
+        <span class="attr-raw">Valor: {{ sheet.attributes.forca }}</span>
       </div>
 
       <div 
         class="attr-card-roll" 
-        @click="rollD20(sheet.attributes.destreza, `Teste de DESTREZA`)"
+        @click="rollD20(calculateModifier(sheet.attributes.destreza), `Teste de DESTREZA`)"
       >
         <span class="attr-abbr">DES</span>
-        <span class="attr-score">+{{ sheet.attributes.destreza }}</span>
-        <span class="attr-desc">Rolar d20 + DES</span>
+        <span class="attr-score">{{ calculateModifier(sheet.attributes.destreza) >= 0 ? `+${calculateModifier(sheet.attributes.destreza)}` : calculateModifier(sheet.attributes.destreza) }}</span>
+        <span class="attr-raw">Valor: {{ sheet.attributes.destreza }}</span>
       </div>
 
       <div 
         class="attr-card-roll" 
-        @click="rollD20(sheet.attributes.constituicao, `Teste de CONSTITUIÇÃO`)"
+        @click="rollD20(calculateModifier(sheet.attributes.constituicao), `Teste de CONSTITUIÇÃO`)"
       >
         <span class="attr-abbr">CON</span>
-        <span class="attr-score">+{{ sheet.attributes.constituicao }}</span>
-        <span class="attr-desc">Rolar d20 + CON</span>
+        <span class="attr-score">{{ calculateModifier(sheet.attributes.constituicao) >= 0 ? `+${calculateModifier(sheet.attributes.constituicao)}` : calculateModifier(sheet.attributes.constituicao) }}</span>
+        <span class="attr-raw">Valor: {{ sheet.attributes.constituicao }}</span>
       </div>
 
       <div 
         class="attr-card-roll" 
-        @click="rollD20(sheet.attributes.inteligencia, `Teste de INTELIGÊNCIA`)"
+        @click="rollD20(calculateModifier(sheet.attributes.inteligencia), `Teste de INTELIGÊNCIA`)"
       >
         <span class="attr-abbr">INT</span>
-        <span class="attr-score">+{{ sheet.attributes.inteligencia }}</span>
-        <span class="attr-desc">Rolar d20 + INT</span>
+        <span class="attr-score">{{ calculateModifier(sheet.attributes.inteligencia) >= 0 ? `+${calculateModifier(sheet.attributes.inteligencia)}` : calculateModifier(sheet.attributes.inteligencia) }}</span>
+        <span class="attr-raw">Valor: {{ sheet.attributes.inteligencia }}</span>
       </div>
 
       <div 
         class="attr-card-roll" 
-        @click="rollD20(sheet.attributes.presenca, `Teste de PRESENÇA`)"
+        @click="rollD20(calculateModifier(sheet.attributes.sabedoria), `Teste de SABEDORIA`)"
+      >
+        <span class="attr-abbr">SAB</span>
+        <span class="attr-score">{{ calculateModifier(sheet.attributes.sabedoria) >= 0 ? `+${calculateModifier(sheet.attributes.sabedoria)}` : calculateModifier(sheet.attributes.sabedoria) }}</span>
+        <span class="attr-raw">Valor: {{ sheet.attributes.sabedoria }}</span>
+      </div>
+
+      <div 
+        class="attr-card-roll" 
+        @click="rollD20(calculateModifier(sheet.attributes.presenca), `Teste de PRESENÇA`)"
       >
         <span class="attr-abbr">PRE</span>
-        <span class="attr-score">+{{ sheet.attributes.presenca }}</span>
-        <span class="attr-desc">Rolar d20 + PRE</span>
+        <span class="attr-score">{{ calculateModifier(sheet.attributes.presenca) >= 0 ? `+${calculateModifier(sheet.attributes.presenca)}` : calculateModifier(sheet.attributes.presenca) }}</span>
+        <span class="attr-raw">Valor: {{ sheet.attributes.presenca }}</span>
       </div>
     </div>
 
@@ -342,10 +351,9 @@ const getSkillBonus = (sk: Skill) => {
 
     <!-- TAB: VISÃO GERAL -->
     <div v-if="activeTab === 'geral'" class="sheet-tab-content">
-      <!-- Traits & Archetype -->
       <div class="traits-container">
         <div class="trait-display-card">
-          <h3 class="trait-header-title">Habilidade de Origem · {{ sheet.build.origin }}</h3>
+          <h3 class="trait-header-title">Origem · {{ sheet.build.origin }}</h3>
           <p class="trait-text">{{ sheet.build.originTrait }}</p>
         </div>
 
@@ -381,11 +389,11 @@ const getSkillBonus = (sk: Skill) => {
     <!-- TAB: TÉCNICAS E VOTOS (#16 & #20) -->
     <div v-if="activeTab === 'tecnicas'" class="sheet-tab-content">
       <div class="section-top-row">
-        <h2 class="sub-tab-title">Técnicas Inatas & Feitiços Jujutsu</h2>
+        <h2 class="sub-tab-title">Técnicas Amaldiçoadas & Feitiços</h2>
       </div>
 
       <div v-if="sheet.build.isRestricted" class="restricted-info-box">
-        Personagem com <strong>Restrição Celestial</strong> não possui técnicas inatas baseadas em energia amaldiçoada.
+        Personagens com <strong>Restrição Celestial</strong> utilizam artes marciais e ferramentas amaldiçoadas alimentadas por <strong>Estamina</strong>.
       </div>
 
       <div v-else-if="sheet.techniques && sheet.techniques.length > 0" class="full-tech-grid">
@@ -433,12 +441,12 @@ const getSkillBonus = (sk: Skill) => {
       </div>
     </div>
 
-    <!-- TAB: PERÍCIAS (#17) - Click to roll -->
+    <!-- TAB: PERÍCIAS (20 Perícias Oficiais) -->
     <div v-if="activeTab === 'pericias'" class="sheet-tab-content">
       <div class="section-top-row">
         <div>
-          <h2 class="sub-tab-title">Perícias & Testes de Atributo</h2>
-          <p class="sub-tab-desc">Clique sobre qualquer perícia para realizar a rolagem automática de 1d20 + bônus calculado.</p>
+          <h2 class="sub-tab-title">Perícias & Testes de Atributo (p. 284)</h2>
+          <p class="sub-tab-desc">Clique sobre qualquer perícia para realizar a rolagem de 1d20 + bônus calculado.</p>
         </div>
       </div>
 
@@ -460,11 +468,11 @@ const getSkillBonus = (sk: Skill) => {
       </div>
     </div>
 
-    <!-- TAB: BIOGRAFIA & DADOS (#12) -->
+    <!-- TAB: BIOGRAFIA & DADOS -->
     <div v-if="activeTab === 'pessoal'" class="sheet-tab-content">
       <div class="bio-grid">
         <div class="bio-card">
-          <h4 class="bio-section-title">Características Físicas</h4>
+          <h4 class="bio-section-title">Aspectos Físicos</h4>
           <ul class="bio-list">
             <li><strong>Idade:</strong> {{ sheet.personal.age || 'Não informada' }}</li>
             <li><strong>Gênero:</strong> {{ sheet.personal.gender || 'Não informado' }}</li>
@@ -508,15 +516,15 @@ const getSkillBonus = (sk: Skill) => {
 
         <div class="tech-modal-props">
           <div class="prop-badge">
-            <span>Custo de Energia:</span>
-            <strong>{{ selectedTechModal.peCost }} PE</strong>
+            <span>Custo:</span>
+            <strong>{{ selectedTechModal.peCost }} {{ sheet.build.isRestricted ? 'Estamina' : 'PE' }}</strong>
           </div>
           <div class="prop-badge">
             <span>Alcance:</span>
             <strong>{{ selectedTechModal.range }}</strong>
           </div>
           <div v-if="selectedTechModal.damageDice" class="prop-badge">
-            <span>Dano / Cura:</span>
+            <span>Dano / Dados:</span>
             <strong>{{ selectedTechModal.damageDice }}</strong>
           </div>
         </div>
@@ -532,7 +540,7 @@ const getSkillBonus = (sk: Skill) => {
             class="btn-use-tech"
             @click="useTechnique(selectedTechModal); selectedTechModal = null;"
           >
-            Executar Técnica (-{{ selectedTechModal.peCost }} PE)
+            Executar Técnica (-{{ selectedTechModal.peCost }} {{ sheet.build.isRestricted ? 'Estamina' : 'PE' }})
           </button>
           <button type="button" class="btn-cancel" @click="selectedTechModal = null">
             Fechar
@@ -653,7 +661,7 @@ const getSkillBonus = (sk: Skill) => {
 
 .hero-right-kpis {
   display: flex;
-  gap: 1.25rem;
+  gap: 1rem;
   flex-wrap: wrap;
 }
 
@@ -661,14 +669,14 @@ const getSkillBonus = (sk: Skill) => {
   background-color: var(--color-bg-base);
   border: 1px solid var(--color-border);
   border-radius: 8px;
-  padding: 0.6rem 1rem;
+  padding: 0.6rem 0.85rem;
   text-align: center;
-  min-width: 90px;
+  min-width: 80px;
 }
 
 .kpi-label {
   display: block;
-  font-size: 0.725rem;
+  font-size: 0.7rem;
   color: var(--color-text-subtle);
   font-weight: 600;
   text-transform: uppercase;
@@ -676,7 +684,7 @@ const getSkillBonus = (sk: Skill) => {
 
 .kpi-val {
   display: block;
-  font-size: 1.25rem;
+  font-size: 1.2rem;
   font-weight: 800;
   color: var(--color-text-main);
   font-variant-numeric: tabular-nums;
@@ -814,11 +822,11 @@ const getSkillBonus = (sk: Skill) => {
   background-color: #3b82f6;
 }
 
-/* Attributes interactive */
+/* 6 Attributes interactive */
 .attributes-grid-interactive {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 1rem;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 0.85rem;
   margin-bottom: 2rem;
 }
 
@@ -826,7 +834,7 @@ const getSkillBonus = (sk: Skill) => {
   background-color: var(--color-bg-surface);
   border: 1px solid var(--color-border);
   border-radius: 10px;
-  padding: 1.1rem 0.75rem;
+  padding: 1rem 0.6rem;
   text-align: center;
   cursor: pointer;
   transition: all 0.15s ease;
@@ -846,14 +854,14 @@ const getSkillBonus = (sk: Skill) => {
 
 .attr-score {
   display: block;
-  font-size: 1.85rem;
+  font-size: 1.6rem;
   font-weight: 900;
   color: var(--color-text-main);
   font-variant-numeric: tabular-nums;
   margin: 0.2rem 0;
 }
 
-.attr-desc {
+.attr-raw {
   display: block;
   font-size: 0.7rem;
   color: #38bdf8;
@@ -1277,7 +1285,13 @@ const getSkillBonus = (sk: Skill) => {
   font-size: 0.875rem;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 900px) {
+  .attributes-grid-interactive {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
   .vitals-dashboard-card {
     grid-template-columns: 1fr;
   }

@@ -174,4 +174,8 @@ vite.config.ts.timestamp-*
 .astro/
 
 # Turbo Repo
-.turbo
+.turbo-e 
+# Rulebook PDF
+*.pdf
+public/assets/aistudio/
+
