@@ -11,25 +11,24 @@ class JwtService {
   }
 
   async validar(req, resp, next) {
-    const [, token] = req.headers.authorization?.split(" ") || ["", ""];
-    if (!token) return resp.status(401).send("Entrada restrita");
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return resp.status(401).json({ message: "Token não fornecido" });
+
+    const [, token] = authHeader.split(" ");
+    if (!token) return resp.status(401).json({ message: "Formato de token inválido" });
 
     try {
       const conteudo = jwt.verify(token, this.chave);
-      if (conteudo.id === undefined || conteudo.subject === undefined) {
-        return resp.status(403).json({ message: "token invalido" });
-      }
-
       req.user = conteudo;
       return next();
     } catch (err) {
-      console.log(err);
-      return resp.status(403).json({ message: "acesso negado", error: err.message });
+      console.error("Erro na validação do token:", err.message);
+      return resp.status(403).json({ message: "Token inválido ou expirado" });
     }
   }
 
-  criarToken = (sujeito, id, role) => {
-    const token = jwt.sign(
+  criarToken(sujeito, id, role) {
+    return jwt.sign(
       {
         subject: sujeito,
         id: id,
@@ -38,9 +37,7 @@ class JwtService {
       this.chave,
       { expiresIn: this.tempoExpiracao }
     );
-
-    return token;
-  };
+  }
 
   async findSujeito(conteudo) {
     try {

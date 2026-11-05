@@ -7,7 +7,8 @@ const schema = new mongoose.Schema({
     },
     email: {
         type: String,
-        required: false,
+        required: true,
+        unique: true
     }
 }, { id: true, timestamps: true });
 

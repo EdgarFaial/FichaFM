@@ -5,23 +5,31 @@ class userService {
         this.BcriptService = BcriptService;
     }
 
-    async login(senha, email) {
+    async login(password, email) {
         const user = await User.findOne({ email: email });
-        if (!user) throw new Error("user invalido");
+        if (!user) throw new Error("Usuário ou senha inválidos");
 
-        const storedPassword = user.password || user.senha;
-        if (!this.BcriptService.isEqual(senha, storedPassword)) {
-            throw Error("user invalido");
+        const isMatch = this.BcriptService.isEqual(password, user.password);
+        if (!isMatch) {
+            throw new Error("Usuário ou senha inválidos");
         }
         return user;
     }
 
-    async save(body) {
-        const rawPassword = body.password || body.senha;
-        body['password'] = this.BcriptService.criptografar(rawPassword);
+    async save(userData) {
+        const { email, password } = userData;
+        
+        // Check if user already exists
+        const existingUser = await User.findOne({ email });
+        if (existingUser) {
+            throw new Error("Email já cadastrado");
+        }
 
-        const user = new User(body);
-        console.log("user: ", user);
+        const hashedPassword = this.BcriptService.criptografar(password);
+        const user = new User({
+            email,
+            password: hashedPassword
+        });
 
         return await user.save();
     }

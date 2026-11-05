@@ -12,7 +12,7 @@ class UserController {
         this.router.post("/register", this.registrar.bind(this));
         this.router.post("/login", this.login.bind(this));
         this.router.post("/google-login", this.googleLogin.bind(this));
-        this.router.get("/validate", this.validarToken.bind(this));
+        this.router.get("/validate", this.JwtService.validar.bind(this.JwtService), this.validarToken.bind(this));
     }
 
     async googleLogin(req, resp) {
@@ -32,49 +32,49 @@ class UserController {
     }
 
     async registrar(req, resp) {
-        const email = req.body.email;
-        const password = req.body.password || req.body.senha;
-        if (!email || !password) {
-            return resp.status(400).json({ message: "Informações faltando na requisição" });
+        const { email, password, senha } = req.body;
+        const pass = password || senha;
+
+        if (!email || !pass) {
+            return resp.status(400).json({ message: "E-mail e senha são obrigatórios" });
         }
         try {
-            const user = await this.UserService.save({ email, password });
-            const token = this.JwtService.criarToken(email, user._id || user.id);
+            const user = await this.UserService.save({ email, password: pass });
+            const token = this.JwtService.criarToken(user.email, user._id);
             return resp.status(201).json({
                 email: user.email,
                 token: token
             });
         } catch (e) {
-            if (e.code == 11000) {
-                console.error("EMAIL JA REGISTRADO");
-                return resp.status(409).json({ message: "Erro ao fazer o registro" });
+            if (e.message === "Email já cadastrado") {
+                return resp.status(409).json({ message: e.message });
             }
-            console.error("erro ao tentar criar novo user: " + e.message);
+            console.error("Erro ao tentar criar novo usuário: " + e.message);
             return resp.status(500).json({ message: "Erro ao criar usuário: " + e.message });
         }
     }
 
-    validarToken(req, resp) {
-        return resp.status(200).json({ message: "Token valido" });
-    }
-
     async login(req, resp) {
-        const email = req.body.email;
-        const password = req.body.password || req.body.senha;
-        if (!email || !password) {
-            return resp.status(400).json({ message: "Informações requeridas não foram enviadas" });
+        const { email, password, senha } = req.body;
+        const pass = password || senha;
+
+        if (!email || !pass) {
+            return resp.status(400).json({ message: "E-mail e senha são obrigatórios" });
         }
         try {
-            const user = await this.UserService.login(password, email);
-            const token = this.JwtService.criarToken(user.email, user._id || user.id);
+            const user = await this.UserService.login(pass, email);
+            const token = this.JwtService.criarToken(user.email, user._id);
             return resp.status(200).json({
                 email: user.email,
                 token: token
             });
         } catch (e) {
-            console.log(e);
             return resp.status(401).json({ message: e.message });
         }
+    }
+    async validarToken(req, resp) {
+        // Se chegou aqui, o middleware JwtService.validar já aprovou o token
+        return resp.status(200).json({ valid: true, user: req.user });
     }
 }
 
