@@ -6,19 +6,26 @@ import type {
   SkillTraining, 
   Technique, 
   BindingVow,
-  AttributeName 
+  AttributeName,
+  Weapon,
+  SavingThrowsMap
 } from '../types/character';
 import { 
   OFFICIAL_SKILLS, 
   OFFICIAL_ORIGINS, 
-  OFFICIAL_SPECIALIZATIONS 
+  OFFICIAL_SPECIALIZATIONS,
+  STANDARD_WEAPON_PRESETS
 } from '../types/character';
 import { 
   calculateModifier,
   calculateTrainingBonus, 
   calculateGrade, 
   calculateVitals, 
-  calculateSkillBonus 
+  calculateSkillBonus,
+  calculateSavingThrowBonus,
+  calculateSaveDC,
+  calculateWeaponAttackBonus,
+  calculateWeaponDamageBonus
 } from '../utils/characterCalculations';
 
 const props = defineProps<{
@@ -30,7 +37,7 @@ const emit = defineEmits<{
   (e: 'cancel'): void;
 }>();
 
-const activeTab = ref<'pessoal' | 'origem' | 'atributos' | 'pericias' | 'tecnicas'>('pessoal');
+const activeTab = ref<'pessoal' | 'origem' | 'atributos' | 'pericias' | 'armas' | 'tecnicas'>('pessoal');
 
 // Personal Info (#12)
 const name = ref(props.initialData?.personal.name || '');
@@ -145,13 +152,17 @@ const vitals = computed(() => {
 // Skills (#17 & p. 284)
 const skills = ref<Skill[]>(
   props.initialData?.skills && props.initialData.skills.length > 0
-    ? JSON.parse(JSON.stringify(props.initialData.skills))
+    ? props.initialData.skills.map((s: Skill) => ({
+        ...s,
+        otherBonus: s.otherBonus || 0
+      }))
     : OFFICIAL_SKILLS.map((s, index) => ({
         id: `skill-${index}`,
         name: s.name,
         attribute: s.attribute,
         training: 'destreinado' as SkillTraining,
-        requiresTraining: s.requiresTraining
+        requiresTraining: s.requiresTraining,
+        otherBonus: 0
       }))
 );
 
@@ -164,7 +175,8 @@ const addCustomSkill = () => {
     id: `custom-${Date.now()}`,
     name: newCustomSkillName.value.trim(),
     attribute: newCustomSkillAttr.value,
-    training: 'treinado'
+    training: 'treinado',
+    otherBonus: 0
   });
   newCustomSkillName.value = '';
 };
@@ -255,9 +267,124 @@ const getAttributeScore = (attr: AttributeName): number => {
   }
 };
 
-const getSkillTotal = (attr: AttributeName, training: SkillTraining) => {
+const getSkillTotal = (attr: AttributeName, training: SkillTraining, otherBonus: number = 0) => {
   const score = getAttributeScore(attr);
-  return calculateSkillBonus(score, training, calculatedTrainingBonus.value);
+  return calculateSkillBonus(score, training, calculatedTrainingBonus.value, otherBonus);
+};
+
+// Testes de Resistência (Salvaguardas)
+const savingThrows = ref<SavingThrowsMap>(
+  props.initialData?.savingThrows || {
+    forca: { trained: false, otherBonus: 0 },
+    destreza: { trained: false, otherBonus: 0 },
+    constituicao: { trained: false, otherBonus: 0 },
+    inteligencia: { trained: false, otherBonus: 0 },
+    sabedoria: { trained: false, otherBonus: 0 },
+    presenca: { trained: false, otherBonus: 0 }
+  }
+);
+
+const getSavingThrowTotal = (attr: AttributeName) => {
+  const score = getAttributeScore(attr);
+  const cfg = savingThrows.value[attr] || { trained: false, otherBonus: 0 };
+  return calculateSavingThrowBonus(score, cfg.trained, calculatedTrainingBonus.value, cfg.otherBonus);
+};
+
+// CD de Resistência de Técnicas e Habilidades: 8 + BT + Modificador Chave
+const spellSaveDC = computed(() => {
+  let keyAttrScore = inteligencia.value;
+  if (effectiveSpecId.value === 'suporte') keyAttrScore = sabedoria.value;
+  else if (effectiveSpecId.value === 'controlador') keyAttrScore = Math.max(inteligencia.value, presenca.value);
+  else if (isRestricted.value || effectiveSpecId.value === 'lutador' || effectiveSpecId.value === 'combate') {
+    keyAttrScore = Math.max(forca.value, destreza.value);
+  }
+  return calculateSaveDC(keyAttrScore, calculatedTrainingBonus.value);
+});
+
+// Armas & Teste de Armas
+const weapons = ref<Weapon[]>(
+  props.initialData?.weapons && props.initialData.weapons.length > 0
+    ? JSON.parse(JSON.stringify(props.initialData.weapons))
+    : [
+        {
+          id: `wp-${Date.now()}-1`,
+          name: 'Ataque Desarmado',
+          category: 'Desarmado',
+          attackAttribute: 'forca',
+          isTrained: true,
+          damageDice: '1d4',
+          damageType: 'Impacto',
+          damageAttribute: 'forca',
+          critical: '20/x2',
+          range: 'Corpo a corpo (1,5m)',
+          properties: 'Leve',
+          description: 'Golpes desarmados infundidos com energia amaldiçoada.'
+        }
+      ]
+);
+
+const newWeapon = ref<Partial<Weapon>>({
+  name: '',
+  category: 'Marcial',
+  attackAttribute: 'forca',
+  isTrained: true,
+  attackOtherBonus: 0,
+  damageDice: '1d8',
+  damageType: 'Corte',
+  damageAttribute: 'forca',
+  damageOtherBonus: 0,
+  critical: '20/x2',
+  range: 'Corpo a corpo (1,5m)',
+  properties: '',
+  description: ''
+});
+const showAddWeaponForm = ref(false);
+
+const handleAddWeapon = () => {
+  if (!newWeapon.value.name?.trim()) return;
+  weapons.value.push({
+    id: `wp-${Date.now()}`,
+    name: newWeapon.value.name.trim(),
+    category: newWeapon.value.category || 'Simples',
+    attackAttribute: (newWeapon.value.attackAttribute as AttributeName) || 'forca',
+    isTrained: newWeapon.value.isTrained ?? true,
+    attackOtherBonus: Number(newWeapon.value.attackOtherBonus) || 0,
+    damageDice: newWeapon.value.damageDice?.trim() || '1d6',
+    damageType: newWeapon.value.damageType?.trim() || 'Impacto',
+    damageAttribute: (newWeapon.value.damageAttribute as AttributeName | 'nenhum') || newWeapon.value.attackAttribute || 'forca',
+    damageOtherBonus: Number(newWeapon.value.damageOtherBonus) || 0,
+    critical: newWeapon.value.critical?.trim() || '20/x2',
+    range: newWeapon.value.range?.trim() || 'Corpo a corpo',
+    properties: newWeapon.value.properties?.trim() || '',
+    description: newWeapon.value.description?.trim() || ''
+  });
+  newWeapon.value = {
+    name: '',
+    category: 'Marcial',
+    attackAttribute: 'forca',
+    isTrained: true,
+    attackOtherBonus: 0,
+    damageDice: '1d8',
+    damageType: 'Corte',
+    damageAttribute: 'forca',
+    damageOtherBonus: 0,
+    critical: '20/x2',
+    range: 'Corpo a corpo (1,5m)',
+    properties: '',
+    description: ''
+  };
+  showAddWeaponForm.value = false;
+};
+
+const addWeaponPreset = (preset: Omit<Weapon, 'id'>) => {
+  weapons.value.push({
+    id: `wp-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    ...JSON.parse(JSON.stringify(preset))
+  });
+};
+
+const removeWeapon = (id: string) => {
+  weapons.value = weapons.value.filter(w => w.id !== id);
 };
 
 // Save Sheet
@@ -275,7 +402,9 @@ const handleSave = () => {
 
   // Percepção total para Atenção (p. 18)
   const percepcaoSkill = skills.value.find((s: Skill) => s.name === 'Percepção');
-  const percepcaoBonus = percepcaoSkill ? getSkillTotal('sabedoria', percepcaoSkill.training) : modSab.value;
+  const percepcaoBonus = percepcaoSkill 
+    ? getSkillTotal('sabedoria', percepcaoSkill.training, percepcaoSkill.otherBonus || 0) 
+    : modSab.value;
   const attention = 10 + percepcaoBonus;
 
   const sheet: CharacterSheet = {
@@ -331,7 +460,9 @@ const handleSave = () => {
     },
     skills: skills.value,
     techniques: isRestricted.value ? [] : techniques.value,
-    bindingVows: bindingVows.value
+    bindingVows: bindingVows.value,
+    savingThrows: savingThrows.value,
+    weapons: weapons.value
   };
 
   emit('save', sheet);
@@ -378,7 +509,7 @@ const handleSave = () => {
         :class="{ active: activeTab === 'atributos' }"
         @click="activeTab = 'atributos'"
       >
-        3. Atributos & Status
+        3. Atributos & Resistências
       </button>
       <button 
         type="button" 
@@ -391,10 +522,18 @@ const handleSave = () => {
       <button 
         type="button" 
         class="tab-btn" 
+        :class="{ active: activeTab === 'armas' }"
+        @click="activeTab = 'armas'"
+      >
+        5. Armas & Ataques ({{ weapons.length }})
+      </button>
+      <button 
+        type="button" 
+        class="tab-btn" 
         :class="{ active: activeTab === 'tecnicas' }"
         @click="activeTab = 'tecnicas'"
       >
-        5. Técnicas & Votos
+        6. Técnicas & Votos
       </button>
     </div>
 
@@ -727,6 +866,131 @@ const handleSave = () => {
         </div>
       </div>
 
+      <!-- Testes de Resistência (Salvaguardas) & CD de Resistência -->
+      <div class="saving-throws-card">
+        <div class="st-header-row">
+          <div>
+            <h3 class="subsection-title">Testes de Resistência (Salvaguardas)</h3>
+            <p class="section-desc">Testes usados para resistir a técnicas amaldiçoadas, venenos, sobrecargas mentais e efeitos adversos. Se for treinado, soma o Bônus de Treinamento (+{{ calculatedTrainingBonus }}).</p>
+          </div>
+          <div class="dc-badge" title="Dificuldade para resistir às suas técnicas e manobras">
+            <span class="dc-label">Sua CD de Resistência</span>
+            <span class="dc-value">CD {{ spellSaveDC }}</span>
+            <span class="dc-formula">8 + BT (+{{ calculatedTrainingBonus }}) + Mod. Chave</span>
+          </div>
+        </div>
+
+        <div class="saving-throws-grid">
+          <!-- FOR -->
+          <div class="st-item-card" :class="{ 'is-trained': savingThrows.forca.trained }">
+            <div class="st-item-top">
+              <label class="st-checkbox-label">
+                <input v-model="savingThrows.forca.trained" type="checkbox" class="st-checkbox" />
+                <span class="st-name">Força (FOR)</span>
+              </label>
+              <span class="st-total">{{ getSavingThrowTotal('forca') >= 0 ? `+${getSavingThrowTotal('forca')}` : getSavingThrowTotal('forca') }}</span>
+            </div>
+            <div class="st-calc-row">
+              <span class="st-mod-sub">Mod: {{ modFor >= 0 ? `+${modFor}` : modFor }} {{ savingThrows.forca.trained ? `+ BT (+${calculatedTrainingBonus})` : '' }}</span>
+              <div class="st-other-box">
+                <label>Outros:</label>
+                <input v-model.number="savingThrows.forca.otherBonus" type="number" placeholder="0" class="st-other-input" />
+              </div>
+            </div>
+          </div>
+
+          <!-- DES -->
+          <div class="st-item-card" :class="{ 'is-trained': savingThrows.destreza.trained }">
+            <div class="st-item-top">
+              <label class="st-checkbox-label">
+                <input v-model="savingThrows.destreza.trained" type="checkbox" class="st-checkbox" />
+                <span class="st-name">Destreza (DES)</span>
+              </label>
+              <span class="st-total">{{ getSavingThrowTotal('destreza') >= 0 ? `+${getSavingThrowTotal('destreza')}` : getSavingThrowTotal('destreza') }}</span>
+            </div>
+            <div class="st-calc-row">
+              <span class="st-mod-sub">Mod: {{ modDes >= 0 ? `+${modDes}` : modDes }} {{ savingThrows.destreza.trained ? `+ BT (+${calculatedTrainingBonus})` : '' }}</span>
+              <div class="st-other-box">
+                <label>Outros:</label>
+                <input v-model.number="savingThrows.destreza.otherBonus" type="number" placeholder="0" class="st-other-input" />
+              </div>
+            </div>
+          </div>
+
+          <!-- CON -->
+          <div class="st-item-card" :class="{ 'is-trained': savingThrows.constituicao.trained }">
+            <div class="st-item-top">
+              <label class="st-checkbox-label">
+                <input v-model="savingThrows.constituicao.trained" type="checkbox" class="st-checkbox" />
+                <span class="st-name">Constituição (CON)</span>
+              </label>
+              <span class="st-total">{{ getSavingThrowTotal('constituicao') >= 0 ? `+${getSavingThrowTotal('constituicao')}` : getSavingThrowTotal('constituicao') }}</span>
+            </div>
+            <div class="st-calc-row">
+              <span class="st-mod-sub">Mod: {{ modCon >= 0 ? `+${modCon}` : modCon }} {{ savingThrows.constituicao.trained ? `+ BT (+${calculatedTrainingBonus})` : '' }}</span>
+              <div class="st-other-box">
+                <label>Outros:</label>
+                <input v-model.number="savingThrows.constituicao.otherBonus" type="number" placeholder="0" class="st-other-input" />
+              </div>
+            </div>
+          </div>
+
+          <!-- INT -->
+          <div class="st-item-card" :class="{ 'is-trained': savingThrows.inteligencia.trained }">
+            <div class="st-item-top">
+              <label class="st-checkbox-label">
+                <input v-model="savingThrows.inteligencia.trained" type="checkbox" class="st-checkbox" />
+                <span class="st-name">Inteligência (INT)</span>
+              </label>
+              <span class="st-total">{{ getSavingThrowTotal('inteligencia') >= 0 ? `+${getSavingThrowTotal('inteligencia')}` : getSavingThrowTotal('inteligencia') }}</span>
+            </div>
+            <div class="st-calc-row">
+              <span class="st-mod-sub">Mod: {{ modInt >= 0 ? `+${modInt}` : modInt }} {{ savingThrows.inteligencia.trained ? `+ BT (+${calculatedTrainingBonus})` : '' }}</span>
+              <div class="st-other-box">
+                <label>Outros:</label>
+                <input v-model.number="savingThrows.inteligencia.otherBonus" type="number" placeholder="0" class="st-other-input" />
+              </div>
+            </div>
+          </div>
+
+          <!-- SAB -->
+          <div class="st-item-card" :class="{ 'is-trained': savingThrows.sabedoria.trained }">
+            <div class="st-item-top">
+              <label class="st-checkbox-label">
+                <input v-model="savingThrows.sabedoria.trained" type="checkbox" class="st-checkbox" />
+                <span class="st-name">Sabedoria (SAB)</span>
+              </label>
+              <span class="st-total">{{ getSavingThrowTotal('sabedoria') >= 0 ? `+${getSavingThrowTotal('sabedoria')}` : getSavingThrowTotal('sabedoria') }}</span>
+            </div>
+            <div class="st-calc-row">
+              <span class="st-mod-sub">Mod: {{ modSab >= 0 ? `+${modSab}` : modSab }} {{ savingThrows.sabedoria.trained ? `+ BT (+${calculatedTrainingBonus})` : '' }}</span>
+              <div class="st-other-box">
+                <label>Outros:</label>
+                <input v-model.number="savingThrows.sabedoria.otherBonus" type="number" placeholder="0" class="st-other-input" />
+              </div>
+            </div>
+          </div>
+
+          <!-- PRE -->
+          <div class="st-item-card" :class="{ 'is-trained': savingThrows.presenca.trained }">
+            <div class="st-item-top">
+              <label class="st-checkbox-label">
+                <input v-model="savingThrows.presenca.trained" type="checkbox" class="st-checkbox" />
+                <span class="st-name">Presença (PRE)</span>
+              </label>
+              <span class="st-total">{{ getSavingThrowTotal('presenca') >= 0 ? `+${getSavingThrowTotal('presenca')}` : getSavingThrowTotal('presenca') }}</span>
+            </div>
+            <div class="st-calc-row">
+              <span class="st-mod-sub">Mod: {{ modPre >= 0 ? `+${modPre}` : modPre }} {{ savingThrows.presenca.trained ? `+ BT (+${calculatedTrainingBonus})` : '' }}</span>
+              <div class="st-other-box">
+                <label>Outros:</label>
+                <input v-model.number="savingThrows.presenca.otherBonus" type="number" placeholder="0" class="st-other-input" />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="tab-nav-row">
         <button type="button" class="btn-prev" @click="activeTab = 'origem'">← Origem & Especialização</button>
         <button type="button" class="btn-next" @click="activeTab = 'pericias'">Próximo: Perícias →</button>
@@ -762,6 +1026,7 @@ const handleSave = () => {
               <th>Perícia</th>
               <th>Atributo Chave</th>
               <th>Treinamento</th>
+              <th style="width: 100px;">Outros</th>
               <th class="text-right">Bônus Calculado</th>
             </tr>
           </thead>
@@ -780,11 +1045,20 @@ const handleSave = () => {
                 <select v-model="sk.training" class="field-select-training">
                   <option value="destreinado">Destreinado (+0)</option>
                   <option value="treinado">Treinado (+{{ calculatedTrainingBonus }})</option>
-                  <option value="especialista">Especialista (+{{ calculatedTrainingBonus * 2 }})</option>
+                  <option value="especialista">Mestre (+{{ calculatedTrainingBonus + Math.floor(calculatedTrainingBonus / 2) }})</option>
                 </select>
               </td>
+              <td>
+                <input
+                  v-model.number="sk.otherBonus"
+                  type="number"
+                  placeholder="0"
+                  class="field-input-other"
+                  title="Bônus manual / outros modificadores"
+                />
+              </td>
               <td class="text-right tabular-nums font-bold bonus-cell">
-                {{ getSkillTotal(sk.attribute, sk.training) >= 0 ? `+${getSkillTotal(sk.attribute, sk.training)}` : getSkillTotal(sk.attribute, sk.training) }}
+                {{ getSkillTotal(sk.attribute, sk.training, sk.otherBonus) >= 0 ? `+${getSkillTotal(sk.attribute, sk.training, sk.otherBonus)}` : getSkillTotal(sk.attribute, sk.training, sk.otherBonus) }}
               </td>
             </tr>
           </tbody>
@@ -792,7 +1066,199 @@ const handleSave = () => {
       </div>
 
       <div class="tab-nav-row">
-        <button type="button" class="btn-prev" @click="activeTab = 'atributos'">← Atributos & Status</button>
+        <button type="button" class="btn-prev" @click="activeTab = 'atributos'">← Atributos & Resistências</button>
+        <button type="button" class="btn-next" @click="activeTab = 'armas'">Próximo: Armas & Ataques →</button>
+      </div>
+    </section>
+
+    <!-- TAB 5: Armas & Jogadas de Ataque -->
+    <section v-if="activeTab === 'armas'" class="tab-pane">
+      <div class="weapons-header">
+        <div>
+          <h2 class="section-title">Armas & Jogadas de Ataque</h2>
+          <p class="section-desc">Armas convencionais, armas marciais, armas de fogo e ferramentas amaldiçoadas. Testes de ataque e dano calculados automaticamente.</p>
+        </div>
+
+        <button 
+          type="button" 
+          class="btn-action-primary" 
+          @click="showAddWeaponForm = !showAddWeaponForm"
+        >
+          {{ showAddWeaponForm ? 'Fechar Formulário' : '+ Nova Arma Personalizada' }}
+        </button>
+      </div>
+
+      <!-- Quick Presets -->
+      <div class="presets-bar">
+        <span class="presets-label">Adicionar Rápido do Livro:</span>
+        <div class="presets-buttons">
+          <button 
+            v-for="preset in STANDARD_WEAPON_PRESETS" 
+            :key="preset.name" 
+            type="button" 
+            class="btn-preset"
+            @click="addWeaponPreset(preset)"
+          >
+            + {{ preset.name }} ({{ preset.damageDice }})
+          </button>
+        </div>
+      </div>
+
+      <!-- Add Weapon Form Modal/Inline -->
+      <div v-if="showAddWeaponForm" class="form-modal-box">
+        <h3 class="form-modal-title">Cadastrar Arma / Ataque</h3>
+        <div class="form-grid">
+          <div class="form-group col-2">
+            <label class="field-label">Nome da Arma / Ataque *</label>
+            <input v-model="newWeapon.name" type="text" placeholder="Ex: Katana Amaldiçoada, Revólver, Soqueira..." class="field-input" />
+          </div>
+
+          <div class="form-group">
+            <label class="field-label">Categoria</label>
+            <select v-model="newWeapon.category" class="field-select">
+              <option value="Simples">Arma Simples</option>
+              <option value="Marcial">Arma Marcial</option>
+              <option value="Amaldiçoada">Ferramenta Amaldiçoada</option>
+              <option value="Desarmado">Ataque Desarmado</option>
+              <option value="Fogo">Arma de Fogo</option>
+              <option value="Exótica">Exótica</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="field-label">Atributo de Ataque (Acerto)</label>
+            <select v-model="newWeapon.attackAttribute" class="field-select">
+              <option value="forca">Força (FOR)</option>
+              <option value="destreza">Destreza (DES - Ágil/Distância)</option>
+              <option value="inteligencia">Inteligência (INT)</option>
+              <option value="sabedoria">Sabedoria (SAB)</option>
+              <option value="presenca">Presença (PRE)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="field-label">Treinamento / Proficiência</label>
+            <label class="checkbox-inline-label">
+              <input v-model="newWeapon.isTrained" type="checkbox" />
+              <span>Treinado (Soma BT +{{ calculatedTrainingBonus }} no ataque)</span>
+            </label>
+          </div>
+
+          <div class="form-group">
+            <label class="field-label">Bônus Adicional de Ataque (Outros)</label>
+            <input v-model.number="newWeapon.attackOtherBonus" type="number" placeholder="0" class="field-input" />
+          </div>
+
+          <div class="form-group">
+            <label class="field-label">Dados de Dano *</label>
+            <input v-model="newWeapon.damageDice" type="text" placeholder="Ex: 1d8, 2d6, 1d4..." class="field-input" />
+          </div>
+
+          <div class="form-group">
+            <label class="field-label">Tipo de Dano</label>
+            <input v-model="newWeapon.damageType" type="text" placeholder="Ex: Corte, Impacto, Perfuração, Amaldiçoado..." class="field-input" />
+          </div>
+
+          <div class="form-group">
+            <label class="field-label">Atributo no Dano</label>
+            <select v-model="newWeapon.damageAttribute" class="field-select">
+              <option value="forca">Força (FOR)</option>
+              <option value="destreza">Destreza (DES)</option>
+              <option value="inteligencia">Inteligência (INT)</option>
+              <option value="sabedoria">Sabedoria (SAB)</option>
+              <option value="presenca">Presença (PRE)</option>
+              <option value="nenhum">Nenhum (Armas de Fogo)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="field-label">Bônus Fixo no Dano (Outros)</label>
+            <input v-model.number="newWeapon.damageOtherBonus" type="number" placeholder="0" class="field-input" />
+          </div>
+
+          <div class="form-group">
+            <label class="field-label">Margem de Crítico</label>
+            <input v-model="newWeapon.critical" type="text" placeholder="Ex: 20/x2, 19-20/x2..." class="field-input" />
+          </div>
+
+          <div class="form-group">
+            <label class="field-label">Alcance</label>
+            <input v-model="newWeapon.range" type="text" placeholder="Ex: Corpo a corpo (1,5m), 9m, 18m..." class="field-input" />
+          </div>
+
+          <div class="form-group col-2">
+            <label class="field-label">Propriedades</label>
+            <input v-model="newWeapon.properties" type="text" placeholder="Ex: Ágil, Versátil, Duas Mãos, Amaldiçoada Grau 2..." class="field-input" />
+          </div>
+
+          <div class="form-group col-2">
+            <label class="field-label">Descrição / Efeitos Especiais</label>
+            <textarea v-model="newWeapon.description" rows="2" placeholder="Detalhes, história ou efeitos adicionais da arma..." class="field-textarea"></textarea>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" class="btn-cancel" @click="showAddWeaponForm = false">Cancelar</button>
+          <button type="button" class="btn-save" @click="handleAddWeapon">Adicionar Arma</button>
+        </div>
+      </div>
+
+      <!-- Weapons List -->
+      <div v-if="weapons.length === 0" class="empty-placeholder">
+        <p>Nenhuma arma cadastrada. Use os botões acima para adicionar armas do livro ou criar uma personalizada.</p>
+      </div>
+
+      <div v-else class="weapons-grid">
+        <div v-for="wp in weapons" :key="wp.id" class="weapon-editor-card">
+          <div class="wp-card-header">
+            <div>
+              <span class="wp-category-badge">{{ wp.category }}</span>
+              <h4 class="wp-name">{{ wp.name }}</h4>
+            </div>
+            <button type="button" class="btn-del-sm" @click="removeWeapon(wp.id)" title="Remover Arma">✕</button>
+          </div>
+
+          <div class="wp-stats-row">
+            <div class="wp-stat-box">
+              <span class="wp-stat-label">Teste de Ataque</span>
+              <span class="wp-stat-val text-blue">
+                1d20 {{ calculateWeaponAttackBonus(wp, { forca, destreza, constituicao, inteligencia, sabedoria, presenca }, calculatedTrainingBonus) >= 0 ? `+ ${calculateWeaponAttackBonus(wp, { forca, destreza, constituicao, inteligencia, sabedoria, presenca }, calculatedTrainingBonus)}` : `- ${Math.abs(calculateWeaponAttackBonus(wp, { forca, destreza, constituicao, inteligencia, sabedoria, presenca }, calculatedTrainingBonus))}` }}
+              </span>
+            </div>
+
+            <div class="wp-stat-box">
+              <span class="wp-stat-label">Dano</span>
+              <span class="wp-stat-val text-red">
+                {{ wp.damageDice }}
+                <template v-if="calculateWeaponDamageBonus(wp, { forca, destreza, constituicao, inteligencia, sabedoria, presenca }) !== 0">
+                  {{ calculateWeaponDamageBonus(wp, { forca, destreza, constituicao, inteligencia, sabedoria, presenca }) > 0 ? '+' : '-' }}
+                  {{ Math.abs(calculateWeaponDamageBonus(wp, { forca, destreza, constituicao, inteligencia, sabedoria, presenca })) }}
+                </template>
+                <span class="wp-damage-type">({{ wp.damageType }})</span>
+              </span>
+            </div>
+
+            <div class="wp-stat-box">
+              <span class="wp-stat-label">Crítico</span>
+              <span class="wp-stat-val">{{ wp.critical || '20/x2' }}</span>
+            </div>
+
+            <div class="wp-stat-box">
+              <span class="wp-stat-label">Alcance</span>
+              <span class="wp-stat-val">{{ wp.range || 'Corpo a corpo' }}</span>
+            </div>
+          </div>
+
+          <div v-if="wp.properties" class="wp-props">
+            <strong>Propriedades:</strong> {{ wp.properties }}
+          </div>
+
+          <p v-if="wp.description" class="wp-desc">{{ wp.description }}</p>
+        </div>
+      </div>
+
+      <div class="tab-nav-row">
+        <button type="button" class="btn-prev" @click="activeTab = 'pericias'">← Perícias</button>
         <button type="button" class="btn-next" @click="activeTab = 'tecnicas'">Próximo: Técnicas & Votos →</button>
       </div>
     </section>
@@ -956,7 +1422,7 @@ const handleSave = () => {
       </div>
 
       <div class="tab-nav-row">
-        <button type="button" class="btn-prev" @click="activeTab = 'pericias'">← Perícias</button>
+        <button type="button" class="btn-prev" @click="activeTab = 'armas'">← Armas & Ataques</button>
         <button type="button" class="btn-save" @click="handleSave">Finalizar e Salvar Ficha ✓</button>
       </div>
     </section>
@@ -1496,6 +1962,24 @@ const handleSave = () => {
   font-size: 0.85rem;
 }
 
+.field-input-other {
+  width: 70px;
+  background-color: var(--color-bg-base);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-main);
+  border-radius: 4px;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.85rem;
+  text-align: center;
+  transition: border-color 0.15s ease;
+}
+
+.field-input-other:focus {
+  outline: none;
+  border-color: #38bdf8;
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.3);
+}
+
 .bonus-cell {
   font-size: 1rem;
   color: #38bdf8;
@@ -1657,6 +2141,300 @@ const handleSave = () => {
   font-size: 0.875rem;
   font-weight: 600;
   cursor: pointer;
+}
+
+/* Saving Throws (Salvaguardas) */
+.saving-throws-card {
+  background-color: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 1.5rem;
+  margin-top: 1.5rem;
+}
+
+.st-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1.25rem;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.dc-badge {
+  background: rgba(147, 51, 234, 0.15);
+  border: 1px solid rgba(147, 51, 234, 0.4);
+  border-radius: 8px;
+  padding: 0.6rem 1rem;
+  text-align: center;
+  min-width: 140px;
+}
+
+.dc-label {
+  display: block;
+  font-size: 0.72rem;
+  color: #c084fc;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.dc-value {
+  display: block;
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: #ffffff;
+}
+
+.dc-formula {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+}
+
+.saving-throws-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+}
+
+.st-item-card {
+  background-color: var(--color-bg-base);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 0.85rem 1rem;
+  transition: all 0.2s ease;
+}
+
+.st-item-card.is-trained {
+  border-color: #38bdf8;
+  background: rgba(56, 189, 248, 0.05);
+}
+
+.st-item-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.st-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.st-checkbox {
+  width: 16px;
+  height: 16px;
+  accent-color: #38bdf8;
+  cursor: pointer;
+}
+
+.st-name {
+  color: var(--color-text-main);
+}
+
+.st-total {
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: #38bdf8;
+  font-family: monospace;
+}
+
+.st-calc-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  gap: 0.5rem;
+}
+
+.st-other-box {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.st-other-input {
+  width: 50px;
+  background-color: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-main);
+  border-radius: 4px;
+  padding: 0.2rem 0.35rem;
+  font-size: 0.75rem;
+  text-align: center;
+}
+
+/* Weapons & Attacks */
+.weapons-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.presets-bar {
+  background-color: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.presets-label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.6rem;
+}
+
+.presets-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.btn-preset {
+  background: var(--color-bg-base);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-main);
+  border-radius: 6px;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-preset:hover {
+  border-color: var(--color-accent);
+  color: #ffffff;
+  background: rgba(220, 38, 38, 0.15);
+}
+
+.weapons-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+
+.weapon-editor-card {
+  background-color: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 1.25rem;
+  position: relative;
+  transition: border-color 0.15s ease;
+}
+
+.weapon-editor-card:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.wp-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 0.75rem;
+}
+
+.wp-category-badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.1);
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  margin-bottom: 0.25rem;
+}
+
+.wp-name {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #ffffff;
+  margin: 0;
+}
+
+.wp-stats-row {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.5rem;
+  background: var(--color-bg-base);
+  border-radius: 6px;
+  padding: 0.6rem;
+  margin-bottom: 0.75rem;
+}
+
+.wp-stat-box {
+  display: flex;
+  flex-direction: column;
+}
+
+.wp-stat-label {
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+}
+
+.wp-stat-val {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #ffffff;
+  font-family: monospace;
+}
+
+.wp-damage-type {
+  font-size: 0.75rem;
+  font-weight: normal;
+  color: var(--color-text-muted);
+  margin-left: 0.25rem;
+}
+
+.wp-props {
+  font-size: 0.8rem;
+  color: #f59e0b;
+  margin-bottom: 0.4rem;
+}
+
+.wp-desc {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  line-height: 1.4;
+  margin: 0;
+}
+
+.checkbox-inline-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding-top: 0.4rem;
+}
+
+.btn-del-sm {
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0.2rem 0.4rem;
+}
+
+.btn-del-sm:hover {
+  color: #ef4444;
 }
 
 .modal-actions {

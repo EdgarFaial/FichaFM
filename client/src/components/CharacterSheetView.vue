@@ -1,7 +1,15 @@
 <script setup lang="ts">
-import { ref } from 'vue';
-import type { CharacterSheet, Technique, Skill } from '../types/character';
-import { calculateModifier, calculateSkillBonus } from '../utils/characterCalculations';
+import { ref, computed } from 'vue';
+import type { CharacterSheet, Technique, Skill, Weapon, AttributeName } from '../types/character';
+import { 
+  calculateModifier, 
+  calculateSkillBonus,
+  calculateSavingThrowBonus,
+  calculateSaveDC,
+  calculateWeaponAttackBonus,
+  calculateWeaponDamageBonus
+} from '../utils/characterCalculations';
+import { useDiceRoller } from '../composables/useDiceRoller';
 
 const props = defineProps<{
   sheet: CharacterSheet;
@@ -17,71 +25,41 @@ const emit = defineEmits<{
 const currentHp = ref(props.sheet.status.currentHp);
 const currentPe = ref(props.sheet.status.currentPe);
 
-const activeTab = ref<'geral' | 'combate' | 'pericias' | 'tecnicas' | 'pessoal'>('geral');
+const activeTab = ref<'geral' | 'ataques' | 'tecnicas' | 'pericias' | 'pessoal'>('geral');
 
 // Selected technique for detailed pop-up (Requisito 19)
 const selectedTechModal = ref<Technique | null>(null);
 
-// Dice roller
+// Global dice roller
+const {
+  rollD20: diceRollerD20,
+  rollAttack: diceRollerAttack,
+  rollDamage: diceRollerDamage,
+  rollFormula: diceRollerFormula,
+  toggleCustomRoller
+} = useDiceRoller();
+
+// Local rollLog mirrored for in-sheet feed
 const rollLog = ref<{ label: string; text: string; total: number; isCrit?: boolean }[]>([]);
 
 const rollDice = (diceStr: string, label: string) => {
-  try {
-    const cleanStr = diceStr.toLowerCase().replace(/\s+/g, '');
-    const parts = cleanStr.split(/([+-])/);
-    let total = 0;
-    let rollDetails = '';
-    let currentSign = 1;
-
-    for (let i = 0; i < parts.length; i++) {
-      const part = parts[i];
-      if (part === '+') {
-        currentSign = 1;
-      } else if (part === '-') {
-        currentSign = -1;
-      } else if (part.includes('d')) {
-        const [countStr, sidesStr] = part.split('d');
-        const count = countStr ? parseInt(countStr, 10) : 1;
-        const sides = parseInt(sidesStr, 10);
-        const rolls: number[] = [];
-        for (let c = 0; c < count; c++) {
-          const r = Math.floor(Math.random() * sides) + 1;
-          rolls.push(r);
-          total += r * currentSign;
-        }
-        rollDetails += `[${rolls.join(', ')}]`;
-      } else if (!isNaN(parseInt(part, 10))) {
-        const mod = parseInt(part, 10);
-        total += mod * currentSign;
-        rollDetails += (currentSign > 0 ? ` + ${mod}` : ` - ${mod}`);
-      }
-    }
-
-    rollLog.value.unshift({
-      label,
-      text: `${diceStr}: ${rollDetails} = ${total}`,
-      total
-    });
-    if (rollLog.value.length > 5) rollLog.value.pop();
-  } catch {
-    const r = Math.floor(Math.random() * 20) + 1;
-    rollLog.value.unshift({
-      label,
-      text: `d20: ${r}`,
-      total: r
-    });
-  }
+  const entry = diceRollerFormula(diceStr, label, 'personalizado');
+  rollLog.value.unshift({
+    label: entry.label,
+    text: entry.breakdown,
+    total: entry.total,
+    isCrit: entry.isCrit
+  });
+  if (rollLog.value.length > 5) rollLog.value.pop();
 };
 
-const rollD20 = (bonus: number, label: string) => {
-  const d20 = Math.floor(Math.random() * 20) + 1;
-  const isCrit = d20 === 20;
-  const total = d20 + bonus;
+const rollD20 = (bonus: number, label: string, category: 'pericia' | 'atributo' | 'salvaguarda' = 'atributo') => {
+  const entry = diceRollerD20(bonus, label, category);
   rollLog.value.unshift({
-    label,
-    text: `d20 (${d20}) ${bonus >= 0 ? '+' : '-'} ${Math.abs(bonus)} = ${total}`,
-    total,
-    isCrit
+    label: entry.label,
+    text: entry.breakdown,
+    total: entry.total,
+    isCrit: entry.isCrit
   });
   if (rollLog.value.length > 5) rollLog.value.pop();
 };
@@ -111,7 +89,13 @@ const useTechnique = (tech: Technique) => {
   }
   alterPe(-tech.peCost);
   if (tech.damageDice) {
-    rollDice(tech.damageDice, `Técnica: ${tech.name}`);
+    const entry = diceRollerFormula(tech.damageDice, `Técnica: ${tech.name}`, 'dano');
+    rollLog.value.unshift({
+      label: entry.label,
+      text: entry.breakdown,
+      total: entry.total,
+      isCrit: entry.isCrit
+    });
   } else {
     rollLog.value.unshift({
       label: `Técnica Ativada`,
@@ -123,7 +107,92 @@ const useTechnique = (tech: Technique) => {
 
 const getSkillBonus = (sk: Skill) => {
   const attrScore = props.sheet.attributes[sk.attribute] ?? 10;
-  return calculateSkillBonus(attrScore, sk.training, props.sheet.progression.trainingBonus);
+  return calculateSkillBonus(attrScore, sk.training, props.sheet.progression.trainingBonus, sk.otherBonus || 0);
+};
+
+const rollSkill = (sk: Skill) => {
+  const bonus = getSkillBonus(sk);
+  const entry = diceRollerD20(bonus, `Perícia: ${sk.name}`, 'pericia');
+  rollLog.value.unshift({
+    label: entry.label,
+    text: entry.breakdown,
+    total: entry.total,
+    isCrit: entry.isCrit
+  });
+  if (rollLog.value.length > 5) rollLog.value.pop();
+};
+
+// Testes de Resistência (Salvaguardas)
+const getSavingThrowBonus = (attr: AttributeName) => {
+  const score = props.sheet.attributes[attr] ?? 10;
+  const cfg = props.sheet.savingThrows?.[attr] || { trained: false, otherBonus: 0 };
+  return calculateSavingThrowBonus(score, cfg.trained, props.sheet.progression.trainingBonus, cfg.otherBonus);
+};
+
+const isSavingThrowTrained = (attr: AttributeName) => {
+  return !!props.sheet.savingThrows?.[attr]?.trained;
+};
+
+const rollSavingThrow = (attr: AttributeName, label: string) => {
+  const bonus = getSavingThrowBonus(attr);
+  const entry = diceRollerD20(bonus, `Salvaguarda de ${label}`, 'salvaguarda');
+  rollLog.value.unshift({
+    label: entry.label,
+    text: entry.breakdown,
+    total: entry.total,
+    isCrit: entry.isCrit
+  });
+  if (rollLog.value.length > 5) rollLog.value.pop();
+};
+
+const spellSaveDC = computed(() => {
+  let keyAttrScore = props.sheet.attributes.inteligencia;
+  const spec = props.sheet.build.specialization?.toLowerCase() || '';
+  if (spec.includes('suporte')) {
+    keyAttrScore = props.sheet.attributes.sabedoria;
+  } else if (spec.includes('controlador')) {
+    keyAttrScore = Math.max(props.sheet.attributes.inteligencia, props.sheet.attributes.presenca);
+  } else if (props.sheet.build.isRestricted || spec.includes('lutador') || spec.includes('combate')) {
+    keyAttrScore = Math.max(props.sheet.attributes.forca, props.sheet.attributes.destreza);
+  }
+  return calculateSaveDC(keyAttrScore, props.sheet.progression.trainingBonus);
+});
+
+// Jogadas de Ataque & Teste de Armas
+const rollAttack = (bonus: number, critStr: string = '20', label: string) => {
+  const entry = diceRollerAttack(bonus, critStr, label);
+  rollLog.value.unshift({
+    label: entry.label,
+    text: entry.breakdown,
+    total: entry.total,
+    isCrit: entry.isCrit
+  });
+  if (rollLog.value.length > 5) rollLog.value.pop();
+};
+
+const getWeaponAttackBonus = (weapon: Weapon) => {
+  return calculateWeaponAttackBonus(weapon, props.sheet.attributes, props.sheet.progression.trainingBonus);
+};
+
+const getWeaponDamageBonus = (weapon: Weapon) => {
+  return calculateWeaponDamageBonus(weapon, props.sheet.attributes);
+};
+
+const rollWeaponAttack = (weapon: Weapon) => {
+  const bonus = getWeaponAttackBonus(weapon);
+  rollAttack(bonus, weapon.critical || '20/x2', weapon.name);
+};
+
+const rollWeaponDamage = (weapon: Weapon, isCritRoll: boolean = false) => {
+  const bonus = getWeaponDamageBonus(weapon);
+  const entry = diceRollerDamage(weapon.damageDice, bonus, weapon.damageType, weapon.name, isCritRoll);
+  rollLog.value.unshift({
+    label: entry.label,
+    text: entry.breakdown,
+    total: entry.total,
+    isCrit: entry.isCrit
+  });
+  if (rollLog.value.length > 5) rollLog.value.pop();
 };
 </script>
 
@@ -133,6 +202,15 @@ const getSkillBonus = (sk: Skill) => {
     <div class="sheet-top-bar">
       <button type="button" class="btn-sheet-nav" @click="emit('back')">← Minhas Fichas</button>
       <div class="sheet-top-right">
+        <button type="button" class="btn-sheet-dice" @click="toggleCustomRoller(true)">
+          <svg class="d20-mini-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="12 2 21 8.5 21 15.5 12 22 3 15.5 3 8.5 12 2" />
+            <polyline points="12 2 12 22" />
+            <polyline points="3 8.5 12 13 21 8.5" />
+            <polyline points="3 15.5 12 13 21 15.5" />
+          </svg>
+          Rolador & Histórico
+        </button>
         <button type="button" class="btn-sheet-edit" @click="emit('edit', sheet)">✎ Editar Ficha</button>
       </div>
     </div>
@@ -260,56 +338,203 @@ const getSkillBonus = (sk: Skill) => {
     <div class="attributes-grid-interactive">
       <div 
         class="attr-card-roll" 
-        @click="rollD20(calculateModifier(sheet.attributes.forca), `Teste de FORÇA`)"
+        title="Clique para rolar teste de FORÇA (1d20 + modificador)"
+        @click="rollD20(calculateModifier(sheet.attributes.forca), `Teste de FORÇA`, 'atributo')"
       >
-        <span class="attr-abbr">FOR</span>
+        <div class="attr-header-row">
+          <span class="attr-abbr">FOR</span>
+          <svg class="attr-dice-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="12 2 21 8.5 21 15.5 12 22 3 15.5 3 8.5 12 2" />
+            <polyline points="12 2 12 22" />
+          </svg>
+        </div>
         <span class="attr-score">{{ calculateModifier(sheet.attributes.forca) >= 0 ? `+${calculateModifier(sheet.attributes.forca)}` : calculateModifier(sheet.attributes.forca) }}</span>
         <span class="attr-raw">Valor: {{ sheet.attributes.forca }}</span>
       </div>
 
       <div 
         class="attr-card-roll" 
-        @click="rollD20(calculateModifier(sheet.attributes.destreza), `Teste de DESTREZA`)"
+        title="Clique para rolar teste de DESTREZA (1d20 + modificador)"
+        @click="rollD20(calculateModifier(sheet.attributes.destreza), `Teste de DESTREZA`, 'atributo')"
       >
-        <span class="attr-abbr">DES</span>
+        <div class="attr-header-row">
+          <span class="attr-abbr">DES</span>
+          <svg class="attr-dice-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="12 2 21 8.5 21 15.5 12 22 3 15.5 3 8.5 12 2" />
+            <polyline points="12 2 12 22" />
+          </svg>
+        </div>
         <span class="attr-score">{{ calculateModifier(sheet.attributes.destreza) >= 0 ? `+${calculateModifier(sheet.attributes.destreza)}` : calculateModifier(sheet.attributes.destreza) }}</span>
         <span class="attr-raw">Valor: {{ sheet.attributes.destreza }}</span>
       </div>
 
       <div 
         class="attr-card-roll" 
-        @click="rollD20(calculateModifier(sheet.attributes.constituicao), `Teste de CONSTITUIÇÃO`)"
+        title="Clique para rolar teste de CONSTITUIÇÃO (1d20 + modificador)"
+        @click="rollD20(calculateModifier(sheet.attributes.constituicao), `Teste de CONSTITUIÇÃO`, 'atributo')"
       >
-        <span class="attr-abbr">CON</span>
+        <div class="attr-header-row">
+          <span class="attr-abbr">CON</span>
+          <svg class="attr-dice-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="12 2 21 8.5 21 15.5 12 22 3 15.5 3 8.5 12 2" />
+            <polyline points="12 2 12 22" />
+          </svg>
+        </div>
         <span class="attr-score">{{ calculateModifier(sheet.attributes.constituicao) >= 0 ? `+${calculateModifier(sheet.attributes.constituicao)}` : calculateModifier(sheet.attributes.constituicao) }}</span>
         <span class="attr-raw">Valor: {{ sheet.attributes.constituicao }}</span>
       </div>
 
       <div 
         class="attr-card-roll" 
-        @click="rollD20(calculateModifier(sheet.attributes.inteligencia), `Teste de INTELIGÊNCIA`)"
+        title="Clique para rolar teste de INTELIGÊNCIA (1d20 + modificador)"
+        @click="rollD20(calculateModifier(sheet.attributes.inteligencia), `Teste de INTELIGÊNCIA`, 'atributo')"
       >
-        <span class="attr-abbr">INT</span>
+        <div class="attr-header-row">
+          <span class="attr-abbr">INT</span>
+          <svg class="attr-dice-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="12 2 21 8.5 21 15.5 12 22 3 15.5 3 8.5 12 2" />
+            <polyline points="12 2 12 22" />
+          </svg>
+        </div>
         <span class="attr-score">{{ calculateModifier(sheet.attributes.inteligencia) >= 0 ? `+${calculateModifier(sheet.attributes.inteligencia)}` : calculateModifier(sheet.attributes.inteligencia) }}</span>
         <span class="attr-raw">Valor: {{ sheet.attributes.inteligencia }}</span>
       </div>
 
       <div 
         class="attr-card-roll" 
-        @click="rollD20(calculateModifier(sheet.attributes.sabedoria), `Teste de SABEDORIA`)"
+        title="Clique para rolar teste de SABEDORIA (1d20 + modificador)"
+        @click="rollD20(calculateModifier(sheet.attributes.sabedoria), `Teste de SABEDORIA`, 'atributo')"
       >
-        <span class="attr-abbr">SAB</span>
+        <div class="attr-header-row">
+          <span class="attr-abbr">SAB</span>
+          <svg class="attr-dice-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="12 2 21 8.5 21 15.5 12 22 3 15.5 3 8.5 12 2" />
+            <polyline points="12 2 12 22" />
+          </svg>
+        </div>
         <span class="attr-score">{{ calculateModifier(sheet.attributes.sabedoria) >= 0 ? `+${calculateModifier(sheet.attributes.sabedoria)}` : calculateModifier(sheet.attributes.sabedoria) }}</span>
         <span class="attr-raw">Valor: {{ sheet.attributes.sabedoria }}</span>
       </div>
 
       <div 
         class="attr-card-roll" 
-        @click="rollD20(calculateModifier(sheet.attributes.presenca), `Teste de PRESENÇA`)"
+        title="Clique para rolar teste de PRESENÇA (1d20 + modificador)"
+        @click="rollD20(calculateModifier(sheet.attributes.presenca), `Teste de PRESENÇA`, 'atributo')"
       >
-        <span class="attr-abbr">PRE</span>
+        <div class="attr-header-row">
+          <span class="attr-abbr">PRE</span>
+          <svg class="attr-dice-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="12 2 21 8.5 21 15.5 12 22 3 15.5 3 8.5 12 2" />
+            <polyline points="12 2 12 22" />
+          </svg>
+        </div>
         <span class="attr-score">{{ calculateModifier(sheet.attributes.presenca) >= 0 ? `+${calculateModifier(sheet.attributes.presenca)}` : calculateModifier(sheet.attributes.presenca) }}</span>
         <span class="attr-raw">Valor: {{ sheet.attributes.presenca }}</span>
+      </div>
+    </div>
+
+    <!-- Testes de Resistência (Salvaguardas) -->
+    <div class="sheet-saving-throws-section">
+      <div class="st-section-top">
+        <div class="st-section-title">
+          <span class="st-section-badge">Salvaguardas</span>
+          <span class="st-section-text">Testes de Resistência (Clique no dado para Rolar):</span>
+        </div>
+        <div class="st-dc-chip" title="Dificuldade para inimigos resistirem às suas técnicas e manobras">
+          CD de Resistência: <strong>CD {{ spellSaveDC }}</strong>
+        </div>
+      </div>
+
+      <div class="st-interactive-row">
+        <button 
+          type="button" 
+          class="st-roll-pill" 
+          :class="{ trained: isSavingThrowTrained('forca') }"
+          title="Clique para rolar Salvaguarda de FOR"
+          @click="rollSavingThrow('forca', 'FORÇA')"
+        >
+          <span class="st-dot">{{ isSavingThrowTrained('forca') ? '●' : '○' }}</span>
+          <span class="st-pill-attr">FOR</span>
+          <span class="st-pill-bonus">{{ getSavingThrowBonus('forca') >= 0 ? `+${getSavingThrowBonus('forca')}` : getSavingThrowBonus('forca') }}</span>
+          <svg class="st-dice-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="12 2 21 8.5 21 15.5 12 22 3 15.5 3 8.5 12 2" />
+          </svg>
+        </button>
+
+        <button 
+          type="button" 
+          class="st-roll-pill" 
+          :class="{ trained: isSavingThrowTrained('destreza') }"
+          title="Clique para rolar Salvaguarda de DES"
+          @click="rollSavingThrow('destreza', 'DESTREZA')"
+        >
+          <span class="st-dot">{{ isSavingThrowTrained('destreza') ? '●' : '○' }}</span>
+          <span class="st-pill-attr">DES</span>
+          <span class="st-pill-bonus">{{ getSavingThrowBonus('destreza') >= 0 ? `+${getSavingThrowBonus('destreza')}` : getSavingThrowBonus('destreza') }}</span>
+          <svg class="st-dice-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="12 2 21 8.5 21 15.5 12 22 3 15.5 3 8.5 12 2" />
+          </svg>
+        </button>
+
+        <button 
+          type="button" 
+          class="st-roll-pill" 
+          :class="{ trained: isSavingThrowTrained('constituicao') }"
+          title="Clique para rolar Salvaguarda de CON"
+          @click="rollSavingThrow('constituicao', 'CONSTITUIÇÃO')"
+        >
+          <span class="st-dot">{{ isSavingThrowTrained('constituicao') ? '●' : '○' }}</span>
+          <span class="st-pill-attr">CON</span>
+          <span class="st-pill-bonus">{{ getSavingThrowBonus('constituicao') >= 0 ? `+${getSavingThrowBonus('constituicao')}` : getSavingThrowBonus('constituicao') }}</span>
+          <svg class="st-dice-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="12 2 21 8.5 21 15.5 12 22 3 15.5 3 8.5 12 2" />
+          </svg>
+        </button>
+
+        <button 
+          type="button" 
+          class="st-roll-pill" 
+          :class="{ trained: isSavingThrowTrained('inteligencia') }"
+          title="Clique para rolar Salvaguarda de INT"
+          @click="rollSavingThrow('inteligencia', 'INTELIGÊNCIA')"
+        >
+          <span class="st-dot">{{ isSavingThrowTrained('inteligencia') ? '●' : '○' }}</span>
+          <span class="st-pill-attr">INT</span>
+          <span class="st-pill-bonus">{{ getSavingThrowBonus('inteligencia') >= 0 ? `+${getSavingThrowBonus('inteligencia')}` : getSavingThrowBonus('inteligencia') }}</span>
+          <svg class="st-dice-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="12 2 21 8.5 21 15.5 12 22 3 15.5 3 8.5 12 2" />
+          </svg>
+        </button>
+
+        <button 
+          type="button" 
+          class="st-roll-pill" 
+          :class="{ trained: isSavingThrowTrained('sabedoria') }"
+          title="Clique para rolar Salvaguarda de SAB"
+          @click="rollSavingThrow('sabedoria', 'SABEDORIA')"
+        >
+          <span class="st-dot">{{ isSavingThrowTrained('sabedoria') ? '●' : '○' }}</span>
+          <span class="st-pill-attr">SAB</span>
+          <span class="st-pill-bonus">{{ getSavingThrowBonus('sabedoria') >= 0 ? `+${getSavingThrowBonus('sabedoria')}` : getSavingThrowBonus('sabedoria') }}</span>
+          <svg class="st-dice-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="12 2 21 8.5 21 15.5 12 22 3 15.5 3 8.5 12 2" />
+          </svg>
+        </button>
+
+        <button 
+          type="button" 
+          class="st-roll-pill" 
+          :class="{ trained: isSavingThrowTrained('presenca') }"
+          title="Clique para rolar Salvaguarda de PRE"
+          @click="rollSavingThrow('presenca', 'PRESENÇA')"
+        >
+          <span class="st-dot">{{ isSavingThrowTrained('presenca') ? '●' : '○' }}</span>
+          <span class="st-pill-attr">PRE</span>
+          <span class="st-pill-bonus">{{ getSavingThrowBonus('presenca') >= 0 ? `+${getSavingThrowBonus('presenca')}` : getSavingThrowBonus('presenca') }}</span>
+          <svg class="st-dice-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="12 2 21 8.5 21 15.5 12 22 3 15.5 3 8.5 12 2" />
+          </svg>
+        </button>
       </div>
     </div>
 
@@ -322,6 +547,14 @@ const getSkillBonus = (sk: Skill) => {
         @click="activeTab = 'geral'"
       >
         Visão Geral & Habilidades
+      </button>
+      <button 
+        type="button" 
+        class="s-tab-btn" 
+        :class="{ active: activeTab === 'ataques' }" 
+        @click="activeTab = 'ataques'"
+      >
+        Ataques & Armas ({{ sheet.weapons?.length || 0 }})
       </button>
       <button 
         type="button" 
@@ -381,6 +614,130 @@ const getSkillBonus = (sk: Skill) => {
                 Ver Detalhes
               </button>
             </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB: ATAQUES & ARMAS -->
+    <div v-if="activeTab === 'ataques'" class="sheet-tab-content">
+      <!-- Quick Base Attacks Row -->
+      <div class="quick-attacks-row">
+        <!-- Ataque Desarmado -->
+        <div class="quick-attack-card">
+          <div class="qa-header">
+            <span class="qa-badge">Desarmado</span>
+            <h4 class="qa-title">Golpe Desarmado</h4>
+          </div>
+          <p class="qa-formula">Acerto: 1d20 {{ (calculateModifier(sheet.attributes.forca) + sheet.progression.trainingBonus) >= 0 ? `+ ${calculateModifier(sheet.attributes.forca) + sheet.progression.trainingBonus}` : `- ${Math.abs(calculateModifier(sheet.attributes.forca) + sheet.progression.trainingBonus)}` }} · Dano: 1d4 {{ calculateModifier(sheet.attributes.forca) >= 0 ? `+ ${calculateModifier(sheet.attributes.forca)}` : `- ${Math.abs(calculateModifier(sheet.attributes.forca))}` }} (Impacto)</p>
+          <div class="qa-actions">
+            <button 
+              type="button" 
+              class="btn-roll-atk"
+              @click="rollAttack(calculateModifier(sheet.attributes.forca) + sheet.progression.trainingBonus, '20/x2', 'Golpe Desarmado')"
+            >
+              🎲 Rolar Ataque
+            </button>
+            <button 
+              type="button" 
+              class="btn-roll-dmg"
+              @click="rollDice(`1d4 ${calculateModifier(sheet.attributes.forca) >= 0 ? '+' : '-'} ${Math.abs(calculateModifier(sheet.attributes.forca))}`, 'Dano: Golpe Desarmado (Impacto)')"
+            >
+              💥 Rolar Dano
+            </button>
+          </div>
+        </div>
+
+        <!-- Ataque com Técnica / Feitiço -->
+        <div v-if="!sheet.build.isRestricted" class="quick-attack-card">
+          <div class="qa-header">
+            <span class="qa-badge curse">Feitiçaria</span>
+            <h4 class="qa-title">Ataque de Técnica / Feitiço</h4>
+          </div>
+          <p class="qa-formula">Acerto: 1d20 {{ (calculateModifier(sheet.attributes.inteligencia) + sheet.progression.trainingBonus) >= 0 ? `+ ${calculateModifier(sheet.attributes.inteligencia) + sheet.progression.trainingBonus}` : `- ${Math.abs(calculateModifier(sheet.attributes.inteligencia) + sheet.progression.trainingBonus)}` }} · CD de Resistência: {{ spellSaveDC }}</p>
+          <div class="qa-actions">
+            <button 
+              type="button" 
+              class="btn-roll-atk"
+              @click="rollAttack(calculateModifier(sheet.attributes.inteligencia) + sheet.progression.trainingBonus, '20/x2', 'Ataque de Técnica/Feitiço')"
+            >
+              🔮 Rolar Ataque Místico
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Weapons Section -->
+      <div class="weapons-section-title-row">
+        <h3 class="section-block-title">Armas & Ferramentas Amaldiçoadas</h3>
+        <span class="weapons-count">{{ sheet.weapons?.length || 0 }} armas registradas</span>
+      </div>
+
+      <div v-if="!sheet.weapons || sheet.weapons.length === 0" class="empty-sheet-msg">
+        Nenhuma arma equipada na ficha. Clique em "Editar Ficha" acima para adicionar armas.
+      </div>
+
+      <div v-else class="sheet-weapons-grid">
+        <div v-for="wp in sheet.weapons" :key="wp.id" class="sheet-weapon-card">
+          <div class="sw-header">
+            <div>
+              <span class="sw-cat">{{ wp.category }}</span>
+              <h4 class="sw-name">{{ wp.name }}</h4>
+            </div>
+            <div class="sw-crit-range">
+              <span>Crítico: <strong>{{ wp.critical || '20/x2' }}</strong></span>
+              <span>Alcance: <strong>{{ wp.range || 'Corpo a corpo' }}</strong></span>
+            </div>
+          </div>
+
+          <div class="sw-details-box">
+            <div class="sw-detail-col">
+              <span class="sw-lbl">Teste de Ataque:</span>
+              <span class="sw-val atk-highlight">
+                1d20 {{ getWeaponAttackBonus(wp) >= 0 ? `+ ${getWeaponAttackBonus(wp)}` : `- ${Math.abs(getWeaponAttackBonus(wp))}` }}
+              </span>
+            </div>
+            <div class="sw-detail-col">
+              <span class="sw-lbl">Dano:</span>
+              <span class="sw-val dmg-highlight">
+                {{ wp.damageDice }}
+                <template v-if="getWeaponDamageBonus(wp) !== 0">
+                  {{ getWeaponDamageBonus(wp) > 0 ? '+' : '-' }} {{ Math.abs(getWeaponDamageBonus(wp)) }}
+                </template>
+                <span class="sw-dtype">({{ wp.damageType }})</span>
+              </span>
+            </div>
+          </div>
+
+          <div v-if="wp.properties" class="sw-props">
+            <strong>Propriedades:</strong> {{ wp.properties }}
+          </div>
+
+          <p v-if="wp.description" class="sw-desc">{{ wp.description }}</p>
+
+          <div class="sw-roll-actions">
+            <button 
+              type="button" 
+              class="btn-wp-atk"
+              @click="rollWeaponAttack(wp)"
+            >
+              🎲 Rolar Ataque
+            </button>
+            <button 
+              type="button" 
+              class="btn-wp-dmg"
+              @click="rollWeaponDamage(wp, false)"
+            >
+              💥 Rolar Dano
+            </button>
+            <button 
+              type="button" 
+              class="btn-wp-crit"
+              @click="rollWeaponDamage(wp, true)"
+              title="Rola o dobro dos dados de dano no acerto crítico"
+            >
+              ★ Crítico
+            </button>
           </div>
         </div>
       </div>
@@ -455,14 +812,28 @@ const getSkillBonus = (sk: Skill) => {
           v-for="sk in sheet.skills" 
           :key="sk.id" 
           class="skill-interactive-card"
-          @click="rollD20(getSkillBonus(sk), `Teste de ${sk.name}`)"
+          title="Clique para rolar teste de perícia no canto inferior direito"
+          @click="rollSkill(sk)"
         >
           <div class="sk-left">
             <span class="sk-name">{{ sk.name }}</span>
-            <span class="sk-training-tag">{{ sk.training }} · {{ sk.attribute.toUpperCase() }}</span>
+            <span class="sk-training-tag">
+              {{ sk.training }} · {{ sk.attribute.toUpperCase() }}
+              <template v-if="sk.otherBonus"> · Outros: {{ sk.otherBonus > 0 ? `+${sk.otherBonus}` : sk.otherBonus }}</template>
+            </span>
           </div>
-          <div class="sk-bonus-badge">
-            {{ getSkillBonus(sk) >= 0 ? `+${getSkillBonus(sk)}` : getSkillBonus(sk) }}
+          <div class="sk-right-actions">
+            <span class="sk-bonus-badge">
+              {{ getSkillBonus(sk) >= 0 ? `+${getSkillBonus(sk)}` : getSkillBonus(sk) }}
+            </span>
+            <div class="btn-dice-icon-pill" title="Rolar com dados">
+              <svg class="d20-mini-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="12 2 21 8.5 21 15.5 12 22 3 15.5 3 8.5 12 2" />
+                <polyline points="12 2 12 22" />
+                <polyline points="3 8.5 12 13 21 8.5" />
+                <polyline points="3 15.5 12 13 21 15.5" />
+              </svg>
+            </div>
           </div>
         </div>
       </div>
@@ -584,6 +955,86 @@ const getSkillBonus = (sk: Skill) => {
   font-size: 0.85rem;
   font-weight: 600;
   cursor: pointer;
+}
+
+.sheet-top-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-sheet-dice {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: linear-gradient(135deg, #7f1d1d, #450a0a);
+  border: 1px solid #ef4444;
+  color: #fff;
+  border-radius: 6px;
+  padding: 0.5rem 0.85rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-sheet-dice:hover {
+  background: linear-gradient(135deg, #991b1b, #581c87);
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.4);
+}
+
+.d20-mini-svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  flex-shrink: 0;
+}
+
+.attr-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.attr-dice-icon {
+  width: 13px;
+  height: 13px;
+  stroke: #ef4444;
+  opacity: 0.8;
+}
+
+.st-dice-svg {
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+  margin-left: 2px;
+  opacity: 0.85;
+}
+
+.sk-right-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-dice-icon-pill {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: rgba(220, 38, 38, 0.15);
+  border: 1px solid rgba(220, 38, 38, 0.4);
+  border-radius: 6px;
+  color: #ef4444;
+  transition: all 0.15s ease;
+}
+
+.skill-interactive-card:hover .btn-dice-icon-pill {
+  background: #dc2626;
+  color: #ffffff;
+  transform: scale(1.05);
 }
 
 /* Hero card */
@@ -1285,8 +1736,396 @@ const getSkillBonus = (sk: Skill) => {
   font-size: 0.875rem;
 }
 
+/* Saving Throws (Salvaguardas) */
+.sheet-saving-throws-section {
+  background-color: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 2rem;
+}
+
+.st-section-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.85rem;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.st-section-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text-main);
+}
+
+.st-section-badge {
+  background: rgba(56, 189, 248, 0.15);
+  color: #38bdf8;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  letter-spacing: 0.05em;
+}
+
+.st-dc-chip {
+  background: rgba(147, 51, 234, 0.15);
+  border: 1px solid rgba(147, 51, 234, 0.35);
+  color: #d8b4fe;
+  font-size: 0.78rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 6px;
+}
+
+.st-dc-chip strong {
+  color: #ffffff;
+}
+
+.st-interactive-row {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 0.6rem;
+}
+
+.st-roll-pill {
+  background-color: var(--color-bg-base);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 0.5rem 0.6rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  color: var(--color-text-main);
+}
+
+.st-roll-pill:hover {
+  border-color: #38bdf8;
+  background-color: rgba(56, 189, 248, 0.08);
+  transform: translateY(-1px);
+}
+
+.st-roll-pill.trained {
+  border-color: rgba(56, 189, 248, 0.5);
+  background: rgba(56, 189, 248, 0.06);
+}
+
+.st-dot {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.st-roll-pill.trained .st-dot {
+  color: #38bdf8;
+}
+
+.st-pill-attr {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.st-pill-bonus {
+  font-size: 0.9rem;
+  font-weight: 800;
+  color: #38bdf8;
+  font-family: monospace;
+}
+
+/* Quick Attacks & Weapons */
+.quick-attacks-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.quick-attack-card {
+  background-color: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 1.25rem;
+}
+
+.qa-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.qa-badge {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--color-text-muted);
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+}
+
+.qa-badge.curse {
+  background: rgba(147, 51, 234, 0.18);
+  color: #c084fc;
+}
+
+.qa-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #ffffff;
+  margin: 0;
+}
+
+.qa-formula {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  margin-bottom: 1rem;
+}
+
+.qa-actions {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.btn-roll-atk {
+  background-color: rgba(56, 189, 248, 0.15);
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  color: #38bdf8;
+  border-radius: 6px;
+  padding: 0.45rem 0.85rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-roll-atk:hover {
+  background-color: rgba(56, 189, 248, 0.25);
+  transform: translateY(-1px);
+}
+
+.btn-roll-dmg {
+  background-color: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #f87171;
+  border-radius: 6px;
+  padding: 0.45rem 0.85rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-roll-dmg:hover {
+  background-color: rgba(239, 68, 68, 0.25);
+  transform: translateY(-1px);
+}
+
+.weapons-section-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.weapons-count {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+.empty-sheet-msg {
+  background-color: var(--color-bg-surface);
+  border: 1px dashed var(--color-border);
+  border-radius: 8px;
+  padding: 2rem;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+}
+
+.sheet-weapons-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1.25rem;
+}
+
+.sheet-weapon-card {
+  background-color: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  transition: border-color 0.15s ease;
+}
+
+.sheet-weapon-card:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.sw-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 0.75rem;
+}
+
+.sw-cat {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.1);
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  margin-bottom: 0.2rem;
+}
+
+.sw-name {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #ffffff;
+  margin: 0;
+}
+
+.sw-crit-range {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.sw-crit-range strong {
+  color: #ffffff;
+}
+
+.sw-details-box {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.5rem;
+  background: var(--color-bg-base);
+  border-radius: 6px;
+  padding: 0.7rem;
+  margin-bottom: 0.75rem;
+}
+
+.sw-detail-col {
+  display: flex;
+  flex-direction: column;
+}
+
+.sw-lbl {
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+}
+
+.sw-val {
+  font-size: 1rem;
+  font-weight: 800;
+  font-family: monospace;
+}
+
+.atk-highlight {
+  color: #38bdf8;
+}
+
+.dmg-highlight {
+  color: #f87171;
+}
+
+.sw-dtype {
+  font-size: 0.75rem;
+  font-weight: normal;
+  color: var(--color-text-muted);
+  margin-left: 0.2rem;
+}
+
+.sw-props {
+  font-size: 0.8rem;
+  color: #f59e0b;
+  margin-bottom: 0.4rem;
+}
+
+.sw-desc {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  line-height: 1.4;
+  margin-bottom: 1rem;
+  flex: 1;
+}
+
+.sw-roll-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: auto;
+  flex-wrap: wrap;
+}
+
+.btn-wp-atk {
+  flex: 1;
+  background-color: rgba(56, 189, 248, 0.15);
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  color: #38bdf8;
+  border-radius: 6px;
+  padding: 0.5rem 0.6rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-wp-atk:hover {
+  background-color: rgba(56, 189, 248, 0.25);
+}
+
+.btn-wp-dmg {
+  flex: 1;
+  background-color: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #f87171;
+  border-radius: 6px;
+  padding: 0.5rem 0.6rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-wp-dmg:hover {
+  background-color: rgba(239, 68, 68, 0.25);
+}
+
+.btn-wp-crit {
+  background-color: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  color: #fbbf24;
+  border-radius: 6px;
+  padding: 0.5rem 0.6rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-wp-crit:hover {
+  background-color: rgba(245, 158, 11, 0.25);
+}
+
 @media (max-width: 900px) {
   .attributes-grid-interactive {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .st-interactive-row {
     grid-template-columns: repeat(3, 1fr);
   }
 }
@@ -1296,6 +2135,9 @@ const getSkillBonus = (sk: Skill) => {
     grid-template-columns: 1fr;
   }
   .attributes-grid-interactive {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .st-interactive-row {
     grid-template-columns: repeat(2, 1fr);
   }
   .traits-container,

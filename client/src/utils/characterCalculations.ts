@@ -1,4 +1,4 @@
-import type { SkillTraining } from '../types/character';
+import type { SkillTraining, AttributeName } from '../types/character';
 
 // Modificador oficial de atributo (p. 18): a cada 2 pontos acima de 10 = +1
 export function calculateModifier(score: number): number {
@@ -128,19 +128,78 @@ export function calculateVitals(
   };
 }
 
+export function getTrainingLevelBonus(training: SkillTraining, trainingBonus: number): number {
+  switch (training) {
+    case 'treinado':
+      return trainingBonus;
+    case 'especialista':
+      // Mestre: BT + metade do BT arredondado para baixo (ex: BT +2 -> 2 + 1 = +3)
+      return trainingBonus + Math.floor(trainingBonus / 2);
+    case 'destreinado':
+    default:
+      return 0;
+  }
+}
+
 export function calculateSkillBonus(
   attributeScore: number,
   training: SkillTraining,
-  trainingBonus: number
+  trainingBonus: number,
+  otherBonus: number = 0
 ): number {
   const mod = calculateModifier(attributeScore);
-  switch (training) {
-    case 'treinado':
-      return mod + trainingBonus;
-    case 'especialista':
-      return mod + (trainingBonus * 2);
-    case 'destreinado':
-    default:
-      return mod;
+  const trainingVal = getTrainingLevelBonus(training, trainingBonus);
+  const other = Number(otherBonus) || 0;
+  return mod + trainingVal + other;
+}
+
+// Bônus de Teste de Resistência (Salvaguarda): Modificador de Atributo + (se treinado: BT) + Outros
+export function calculateSavingThrowBonus(
+  attributeScore: number,
+  isTrained: boolean,
+  trainingBonus: number,
+  otherBonus: number = 0
+): number {
+  const mod = calculateModifier(attributeScore);
+  const bt = isTrained ? trainingBonus : 0;
+  const other = Number(otherBonus) || 0;
+  return mod + bt + other;
+}
+
+// CD de Resistência de Técnicas e Habilidades: 8 + BT + Modificador Chave
+export function calculateSaveDC(
+  keyAttributeScore: number,
+  trainingBonus: number,
+  otherBonus: number = 0
+): number {
+  const mod = calculateModifier(keyAttributeScore);
+  return 8 + trainingBonus + mod + (Number(otherBonus) || 0);
+}
+
+// Jogada de Ataque com Arma: Modificador de Atributo (FOR ou DES) + (se treinado: BT) + Outros
+export function calculateWeaponAttackBonus(
+  weapon: { attackAttribute: AttributeName; isTrained: boolean; attackOtherBonus?: number },
+  attributes: { forca: number; destreza: number; constituicao: number; inteligencia: number; sabedoria: number; presenca: number },
+  trainingBonus: number
+): number {
+  const attrScore = attributes[weapon.attackAttribute] ?? 10;
+  const mod = calculateModifier(attrScore);
+  const bt = weapon.isTrained ? trainingBonus : 0;
+  const other = Number(weapon.attackOtherBonus) || 0;
+  return mod + bt + other;
+}
+
+// Dano de Arma: Modificador de Atributo (FOR ou DES) + Outros
+export function calculateWeaponDamageBonus(
+  weapon: { attackAttribute: AttributeName; damageAttribute?: AttributeName | 'nenhum'; damageOtherBonus?: number },
+  attributes: { forca: number; destreza: number; constituicao: number; inteligencia: number; sabedoria: number; presenca: number }
+): number {
+  if (weapon.damageAttribute === 'nenhum') {
+    return Number(weapon.damageOtherBonus) || 0;
   }
+  const targetAttr: AttributeName = weapon.damageAttribute || weapon.attackAttribute;
+  const attrScore = attributes[targetAttr] ?? 10;
+  const mod = calculateModifier(attrScore);
+  const other = Number(weapon.damageOtherBonus) || 0;
+  return mod + other;
 }

@@ -8,6 +8,7 @@ export interface Skill {
   attribute: AttributeName;
   training: SkillTraining;
   requiresTraining?: boolean;
+  otherBonus?: number;
 }
 
 export interface Technique {
@@ -19,6 +20,32 @@ export interface Technique {
   damageDice?: string;
   description: string;
 }
+
+export interface Weapon {
+  id: string;
+  name: string;
+  category: string; // 'Simples' | 'Marcial' | 'Amaldiçoada' | 'Desarmado' | 'Fogo'
+  attackAttribute: AttributeName; // 'forca' | 'destreza'
+  isTrained: boolean;
+  attackOtherBonus?: number;
+  damageDice: string; // Ex: '1d8', '2d6', '1d4'
+  damageType: string; // 'Corte', 'Impacto', 'Perfuração', 'Amaldiçoado'
+  damageAttribute?: AttributeName | 'nenhum';
+  damageOtherBonus?: number;
+  critical: string; // Ex: '20/x2', '19-20/x2'
+  range: string; // Ex: 'Corpo a corpo (1,5m)', '9m', '18m'
+  properties?: string; // Ex: 'Ágil, Versátil'
+  description?: string;
+}
+
+export interface SavingThrowConfig {
+  trained: boolean;
+  otherBonus?: number;
+}
+
+export type SavingThrowsMap = {
+  [key in AttributeName]: SavingThrowConfig;
+};
 
 export interface BindingVow {
   id: string;
@@ -84,6 +111,8 @@ export interface CharacterSheet {
   skills: Skill[];
   techniques: Technique[];
   bindingVows: BindingVow[];
+  savingThrows?: SavingThrowsMap;
+  weapons?: Weapon[];
 }
 
 // 20 Perícias Oficiais (Livro de Regras v2.5.2, p. 284)
@@ -211,5 +240,114 @@ export const OFFICIAL_SPECIALIZATIONS = [
     hpPerLevel: 7,
     pePerLevel: 0,
     trait: 'Restrito pelos Céus: 0 PE, Pontos de Estamina (4 + 4/nível), soma FOR ou CON na Defesa e Ataque Furtivo.'
+  }
+];
+
+export const STANDARD_WEAPON_PRESETS: Omit<Weapon, 'id'>[] = [
+  {
+    name: 'Ataque Desarmado',
+    category: 'Desarmado',
+    attackAttribute: 'forca',
+    isTrained: true,
+    damageDice: '1d4',
+    damageType: 'Impacto',
+    damageAttribute: 'forca',
+    critical: '20/x2',
+    range: 'Corpo a corpo (1,5m)',
+    properties: 'Leve, Condução Básica',
+    description: 'Golpes marciais desarmados (socos, chutes e joelhadas) infundidos com energia.'
+  },
+  {
+    name: 'Katana',
+    category: 'Marcial',
+    attackAttribute: 'destreza',
+    isTrained: true,
+    damageDice: '1d8',
+    damageType: 'Corte',
+    damageAttribute: 'destreza',
+    critical: '19-20/x2',
+    range: 'Corpo a corpo (1,5m)',
+    properties: 'Ágil, Versátil (1d10 com duas mãos)',
+    description: 'Espada tradicional japonesa afiada e balanceada, ideal para feiticeiros de combate ágil.'
+  },
+  {
+    name: 'Adaga',
+    category: 'Simples',
+    attackAttribute: 'destreza',
+    isTrained: true,
+    damageDice: '1d4',
+    damageType: 'Perfuração',
+    damageAttribute: 'destreza',
+    critical: '19-20/x2',
+    range: 'Corpo a corpo / Arremesso 6m',
+    properties: 'Ágil, Leve, Ocultável',
+    description: 'Lâmina curta e leve para golpes rápidos, ataques furtivos e arremessos.'
+  },
+  {
+    name: 'Espada Grande (Montante)',
+    category: 'Marcial',
+    attackAttribute: 'forca',
+    isTrained: true,
+    damageDice: '2d6',
+    damageType: 'Corte',
+    damageAttribute: 'forca',
+    critical: '20/x2',
+    range: 'Corpo a corpo (1,5m)',
+    properties: 'Pesada, Duas Mãos',
+    description: 'Espada massiva que requer força considerável para desferir golpes devastadores.'
+  },
+  {
+    name: 'Nunchaku Amaldiçoado',
+    category: 'Amaldiçoada',
+    attackAttribute: 'destreza',
+    isTrained: true,
+    damageDice: '1d6',
+    damageType: 'Impacto',
+    damageAttribute: 'destreza',
+    critical: '20/x2',
+    range: 'Corpo a corpo (1,5m)',
+    properties: 'Ágil, Amaldiçoada Grau 3',
+    description: 'Arma articulada que conduz facilmente energia amaldiçoada em impactos sequenciais.'
+  },
+  {
+    name: 'Arco Curto',
+    category: 'Simples',
+    attackAttribute: 'destreza',
+    isTrained: true,
+    damageDice: '1d6',
+    damageType: 'Perfuração',
+    damageAttribute: 'destreza',
+    critical: '20/x2',
+    range: 'À distância (24m)',
+    properties: 'Duas Mãos, Munição',
+    description: 'Arma de longo alcance para disparos de flechas amaldiçoadas.'
+  },
+  {
+    name: 'Pistola 9mm',
+    category: 'Fogo',
+    attackAttribute: 'destreza',
+    isTrained: true,
+    damageDice: '2d6',
+    damageType: 'Balístico',
+    damageAttribute: 'nenhum',
+    critical: '19-20/x2',
+    range: 'À distância (15m)',
+    properties: 'Fogo, Leve, Recarga',
+    description: 'Arma de fogo portátil utilizada para disparos surpresa ou com projéteis modificados.'
+  },
+  {
+    name: 'Nuvem Flutuante (Playful Cloud)',
+    category: 'Amaldiçoada',
+    attackAttribute: 'forca',
+    isTrained: true,
+    attackOtherBonus: 2,
+    damageDice: '1d12',
+    damageType: 'Impacto Amaldiçoado',
+    damageAttribute: 'forca',
+    damageOtherBonus: 2,
+    critical: '19-20/x2',
+    range: 'Corpo a corpo (1,5m)',
+    properties: 'Grau Especial, Três Seções, Condução Pura de Força',
+    description: 'Ferramenta amaldiçoada de grau especial que multiplica seu poder puramente com base na força física bruta do portador.'
   }
 ];

@@ -7,6 +7,7 @@ import LoginView from './components/LoginView.vue';
 import DashboardView from './components/DashboardView.vue';
 import CharacterEditor from './components/CharacterEditor.vue';
 import CharacterSheetView from './components/CharacterSheetView.vue';
+import DiceRollerWidget from './components/DiceRollerWidget.vue';
 
 const activeView = ref<ViewMode>('home');
 const userEmail = ref<string | null>(null);
@@ -156,6 +157,9 @@ const handleUpdateSheet = (sheet: CharacterSheet) => {
       @edit-character="handleEditCharacter"
       @delete-character="handleDeleteCharacter"
     />
+
+    <!-- Global Dice Roller System (FAB, Popup in bottom-right, Custom Roller & History) -->
+    <DiceRollerWidget />
   </div>
 </template>
 

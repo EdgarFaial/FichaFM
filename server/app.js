@@ -13,7 +13,7 @@ const JWTService = require('./src/JWTService');
 const UserService = require('./src/UserService');
 const UserController = require('./src/UserController');
 
-const port = process.env.PORT || 3000;
+const port = 3000;
 const host = '0.0.0.0';
 const app = express();
 
@@ -52,6 +52,16 @@ app.use((err, req, res, next) => {
         return res.status(503).json({ error: 'Service temporarily unavailable (database offline)' });
     }
     next(err);
+});
+
+// SPA fallback
+app.get('*', (req, res) => {
+    const indexPath = path.join(clientDistPath, 'index.html');
+    if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+    } else {
+        res.send('Ficha FM - Client build in progress or not found. Please run build.');
+    }
 });
 
 app.listen(port, host, () => {
