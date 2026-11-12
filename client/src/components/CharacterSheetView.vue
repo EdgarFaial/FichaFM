@@ -13,6 +13,7 @@ import { useDiceRoller } from '../composables/useDiceRoller';
 
 const props = defineProps<{
   sheet: CharacterSheet;
+  isSaving?: boolean;   // ← NOVO
 }>();
 
 const emit = defineEmits<{
@@ -67,18 +68,12 @@ const rollD20 = (bonus: number, label: string, category: 'pericia' | 'atributo' 
 // HP & PE/Estamina modifiers
 const alterHp = (amount: number) => {
   currentHp.value = Math.max(0, Math.min(props.sheet.status.maxHp, currentHp.value + amount));
-  emit('update-sheet', {
-    ...props.sheet,
-    status: { ...props.sheet.status, currentHp: currentHp.value }
-  });
+  emitSheetUpdateDebounced();
 };
 
 const alterPe = (amount: number) => {
   currentPe.value = Math.max(0, Math.min(props.sheet.status.maxPe, currentPe.value + amount));
-  emit('update-sheet', {
-    ...props.sheet,
-    status: { ...props.sheet.status, currentPe: currentPe.value }
-  });
+  emitSheetUpdateDebounced();
 };
 
 const useTechnique = (tech: Technique) => {
@@ -194,6 +189,27 @@ const rollWeaponDamage = (weapon: Weapon, isCritRoll: boolean = false) => {
   });
   if (rollLog.value.length > 5) rollLog.value.pop();
 };
+
+function debounce<T extends (...args: any[]) => void>(fn: T, ms: number): T {
+  let t: ReturnType<typeof setTimeout> | null = null;
+  return ((...args: Parameters<T>) => {
+    if (t) clearTimeout(t);
+    t = setTimeout(() => fn(...args), ms);
+  }) as T;
+}
+
+const emitSheetUpdateDebounced = debounce(() => {
+  emit('update-sheet', {
+    ...props.sheet,
+    status: {
+      ...props.sheet.status,
+      currentHp: currentHp.value,
+      currentPe: currentPe.value
+    }
+  });
+}, 400);
+
+
 </script>
 
 <template>
@@ -212,6 +228,14 @@ const rollWeaponDamage = (weapon: Weapon, isCritRoll: boolean = false) => {
           Rolador & Histórico
         </button>
         <button type="button" class="btn-sheet-edit" @click="emit('edit', sheet)">✎ Editar Ficha</button>
+      </div>
+            <div class="sheet-top-right">
+        <span v-if="isSaving" class="saving-indicator">💾 Salvando…</span>
+        <button type="button" class="btn-sheet-dice" @click="toggleCustomRoller(true)">
+          <!-- svg e texto existentes -->
+          Rolador & Histórico
+        </button>
+        <button type="button" class="btn-sheet-edit" :disabled="isSaving" @click="emit('edit', sheet)">✎ Editar Ficha</button>
       </div>
     </div>
 
@@ -2148,4 +2172,13 @@ const rollWeaponDamage = (weapon: Weapon, isCritRoll: boolean = false) => {
     grid-column: span 1;
   }
 }
+.saving-indicator {
+  font-size: 0.78rem;
+  color: #fbbf24;
+  font-weight: 600;
+  padding: 0.3rem 0.6rem;
+  background: rgba(245, 158, 11, 0.1);
+  border-radius: 6px;
+}
+.btn-sheet-edit:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>

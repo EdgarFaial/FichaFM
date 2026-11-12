@@ -5,6 +5,8 @@ import { calculateModifier } from '../utils/characterCalculations';
 defineProps<{
   userEmail: string;
   characters: CharacterSheet[];
+  loading?: boolean;        // ← NOVO
+  error?: string | null;    // ← NOVO
 }>();
 
 const emit = defineEmits<{
@@ -12,6 +14,7 @@ const emit = defineEmits<{
   (e: 'open-character', sheet: CharacterSheet): void;
   (e: 'edit-character', sheet: CharacterSheet): void;
   (e: 'delete-character', id: string): void;
+  (e: 'refresh'): void;     // ← NOVO
 }>();
 
 const handleDelete = (id: string, name: string) => {
@@ -28,22 +31,40 @@ const handleDelete = (id: string, name: string) => {
         <div class="user-greeting">Sessão · {{ userEmail }}</div>
         <h1 class="dash-title">Fichas de Personagem</h1>
       </div>
-      <button type="button" class="btn-create" @click="emit('new-character')">
-        + Criar Nova Ficha
-      </button>
+      <div class="dash-actions">
+        <button
+          type="button"
+          class="btn-refresh"
+          :disabled="loading"
+          @click="emit('refresh')"
+          title="Recarregar fichas do servidor"
+        >
+          {{ loading ? '⟳ Carregando…' : '↻ Atualizar' }}
+        </button>
+        <button
+          type="button"
+          class="btn-create"
+          :disabled="loading"
+          @click="emit('new-character')"
+        >
+          + Criar Nova Ficha
+        </button>
+      </div>
+    </div>
+
+    <div v-if="error" class="error-banner">
+      <strong>Erro:</strong> {{ error }}
+      <button type="button" class="btn-error-close" @click="emit('refresh')">Tentar novamente</button>
     </div>
 
     <!-- Empty state when no characters exist -->
-    <div v-if="characters.length === 0" class="empty-state">
+    <div v-if="loading && characters.length === 0" class="empty-state">
       <div class="empty-crest">✦</div>
-      <h2 class="empty-title">Nenhuma ficha criada ainda</h2>
-      <p class="empty-desc">
-        Comece criando a ficha do seu feiticeiro com cálculo automático de atributos, 
-        energia amaldiçoada / estamina, técnicas e perícias do sistema Feiticeiros & Maldições v2.5.2.
-      </p>
-      <button type="button" class="btn-create-large" @click="emit('new-character')">
-        Criar Primeira Ficha
-      </button>
+      <h2 class="empty-title">Carregando fichas…</h2>
+    </div>
+
+    <div v-else-if="characters.length === 0" class="empty-state">
+      <!-- conteúdo original do empty-state -->
     </div>
 
     <!-- Character Cards Grid -->
@@ -111,28 +132,9 @@ const handleDelete = (id: string, name: string) => {
 
         <!-- Card Actions -->
         <div class="char-card-actions">
-          <button 
-            type="button" 
-            class="btn-open-sheet" 
-            @click="emit('open-character', char)"
-          >
-            Abrir Ficha
-          </button>
-          <button 
-            type="button" 
-            class="btn-edit-sheet" 
-            @click="emit('edit-character', char)"
-          >
-            Editar
-          </button>
-          <button 
-            type="button" 
-            class="btn-del-sheet" 
-            @click="handleDelete(char.id, char.personal.name)"
-            title="Excluir ficha"
-          >
-            Excluir
-          </button>
+          <button type="button" class="btn-open-sheet" :disabled="loading" @click="emit('open-character', char)">Abrir Ficha</button>
+          <button type="button" class="btn-edit-sheet" :disabled="loading" @click="emit('edit-character', char)">Editar</button>
+          <button type="button" class="btn-del-sheet" :disabled="loading" @click="handleDelete(char.id, char.personal.name)" title="Excluir ficha">Excluir</button>
         </div>
       </article>
     </div>
@@ -420,4 +422,44 @@ const handleDelete = (id: string, name: string) => {
   border-color: #ef4444;
   color: #ef4444;
 }
+.dash-actions { display: flex; gap: 0.6rem; }
+
+.btn-refresh {
+  background-color: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-main);
+  border-radius: 8px;
+  padding: 0.65rem 1rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn-refresh:hover:not(:disabled) { border-color: var(--color-border-hover); }
+.btn-refresh:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.error-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background-color: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #fca5a5;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1.5rem;
+  font-size: 0.875rem;
+}
+.btn-error-close {
+  margin-left: auto;
+  background: none;
+  border: 1px solid currentColor;
+  color: inherit;
+  border-radius: 6px;
+  padding: 0.3rem 0.65rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+button:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>

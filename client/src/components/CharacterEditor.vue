@@ -30,6 +30,8 @@ import {
 
 const props = defineProps<{
   initialData?: CharacterSheet | null;
+  isSaving?: boolean;          // ← NOVO
+  saveError?: string | null;   // ← NOVO
 }>();
 
 const emit = defineEmits<{
@@ -480,11 +482,20 @@ const handleSave = () => {
       </div>
 
       <div class="creator-top-actions">
-        <button type="button" class="btn-cancel" @click="emit('cancel')">Cancelar</button>
-        <button type="button" class="btn-save" @click="handleSave">Salvar Personagem</button>
+        <button type="button" class="btn-cancel" :disabled="isSaving" @click="emit('cancel')">Cancelar</button>
+        <button
+          type="button"
+          class="btn-save"
+          :disabled="isSaving"
+          @click="handleSave"
+        >
+          {{ isSaving ? 'Salvando…' : 'Salvar Personagem' }}
+        </button>
       </div>
     </div>
-
+        <div v-if="saveError" class="editor-error-banner">
+      <strong>Erro ao salvar:</strong> {{ saveError }}
+    </div>
     <!-- Stepper / Tabs -->
     <div class="creator-tabs">
       <button 
@@ -1423,7 +1434,9 @@ const handleSave = () => {
 
       <div class="tab-nav-row">
         <button type="button" class="btn-prev" @click="activeTab = 'armas'">← Armas & Ataques</button>
-        <button type="button" class="btn-save" @click="handleSave">Finalizar e Salvar Ficha ✓</button>
+                <button type="button" class="btn-save" :disabled="isSaving" @click="handleSave">
+          {{ isSaving ? 'Salvando…' : 'Finalizar e Salvar Ficha ✓' }}
+        </button>
       </div>
     </section>
   </div>
@@ -2461,4 +2474,14 @@ const handleSave = () => {
     grid-column: span 1;
   }
 }
+.editor-error-banner {
+  background-color: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #fca5a5;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1.5rem;
+  font-size: 0.875rem;
+}
+.btn-save:disabled { opacity: 0.6; cursor: not-allowed; }
 </style>
