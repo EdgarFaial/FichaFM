@@ -1,5 +1,5 @@
 // src/services/api.ts
-const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3000/api';
+const API_BASE = (import.meta as any).env?.VITE_API_URL || 'https://criador-de-ficha-feiticeiros-e-maldicoes.onrender.com/api';
 
 function getToken(): string | null {
   return localStorage.getItem('ficha_token'); // ← alinhado ao App.vue / LoginView
