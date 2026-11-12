@@ -55,7 +55,7 @@ app.use((err, req, res, next) => {
 });
 
 // SPA fallback
-app.get('*', (req, res) => {
+app.get('/*splat', (req, res) => {
     const indexPath = path.join(clientDistPath, 'index.html');
     if (fs.existsSync(indexPath)) {
         res.sendFile(indexPath);

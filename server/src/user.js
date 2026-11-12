@@ -9,7 +9,14 @@ const schema = new mongoose.Schema({
         type: String,
         required: true,
         unique: true
-    }
+    },
+    fichas: [
+        {
+            type: Object,
+            required: false,
+            unique: false
+        }
+    ]
 }, { id: true, timestamps: true });
 
 const entity = mongoose.models.User || mongoose.model("User", schema);
